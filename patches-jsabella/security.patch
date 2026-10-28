@@ -1,0 +1,4280 @@
+diff --git a/OSX/authd/PreloginUserDb.m b/OSX/authd/PreloginUserDb.m
+index 5d6a774c..f909776e 100644
+--- a/OSX/authd/PreloginUserDb.m
++++ b/OSX/authd/PreloginUserDb.m
+@@ -1,3 +1,4 @@
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ //
+ //  PreloginUserDb.m
+ //  authd
+@@ -862,13 +863,13 @@ OSStatus prelogin_smartcardonly_override(const char *uuid, unsigned char operati
+ {
+     if (!uuid) {
+         os_log_error(AUTHD_LOG, "No volume UUID provided");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     
+     NSUUID *volumeUuid = [[NSUUID alloc] initWithUUIDString:[NSString stringWithUTF8String:uuid]];
+     if (!volumeUuid) {
+         os_log_error(AUTHD_LOG, "Invalid volume UUID provided: %{public}s", uuid);
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     PreloginUserDb *database;
+diff --git a/OSX/libsecurity_asn1/lib/SecAsn1Coder.c b/OSX/libsecurity_asn1/lib/SecAsn1Coder.c
+index e72dd1a2..7bd530cd 100644
+--- a/OSX/libsecurity_asn1/lib/SecAsn1Coder.c
++++ b/OSX/libsecurity_asn1/lib/SecAsn1Coder.c
+@@ -23,6 +23,7 @@
+  * SecAsn1Coder.h: ANS1 encode/decode object, ANSI C version.
+  */
+  
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecAsn1Coder.h"
+ #include "plarenas.h"
+ #include "prerror.h"
+@@ -52,7 +53,7 @@ OSStatus SecAsn1CoderCreate(
+ 	SecAsn1CoderRef  *coder)
+ {
+ 	if(coder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	SecAsn1CoderRef _coder = (SecAsn1CoderRef)malloc(sizeof(SecAsn1Coder_t));
+ 	_coder->mPool = PORT_NewArena(CHUNKSIZE_DEF);
+@@ -68,7 +69,7 @@ OSStatus SecAsn1CoderRelease(
+ 	SecAsn1CoderRef  coder)
+ {
+ 	if(coder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(coder->mPool != NULL) {
+ 		/*
+@@ -98,7 +99,7 @@ OSStatus SecAsn1Decode(
+ 	void					*dest)
+ {
+ 	if((coder == NULL) || (src == NULL) || (templ == NULL) || (dest == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	SECStatus prtn = SEC_ASN1Decode(coder->mPool, dest, templ, (const char *)src, len);
+ 	if(prtn) {
+@@ -134,7 +135,7 @@ OSStatus SecAsn1EncodeItem(
+ 	SecAsn1Item				*dest)
+ {
+ 	if((coder == NULL) || (src == NULL) || (templ == NULL) || (dest == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	dest->Data = NULL;
+ 	dest->Length = 0;
+@@ -142,7 +143,7 @@ OSStatus SecAsn1EncodeItem(
+ 	SecAsn1Item *rtnItem = SEC_ASN1EncodeItem(coder->mPool, dest, src, templ);
+ 	if(rtnItem == NULL) {
+ 		/* FIXME what to return here? */
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	else {
+ 		return errSecSuccess;
+@@ -180,7 +181,7 @@ OSStatus SecAsn1AllocItem(
+ 	size_t					len)
+ {
+ 	if((coder == NULL) || (item == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	item->Data = (uint8_t *)PORT_ArenaAlloc(coder->mPool, len);
+ 	if(item->Data == NULL) {
+@@ -198,7 +199,7 @@ OSStatus SecAsn1AllocCopy(
+ 	SecAsn1Item				*dest)
+ {
+ 	if(src == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	OSStatus ortn = SecAsn1AllocItem(coder, dest, len);
+ 	if(ortn) {
+diff --git a/OSX/libsecurity_cdsa_utilities/lib/cssmerrors.cpp b/OSX/libsecurity_cdsa_utilities/lib/cssmerrors.cpp
+index 12e3bc74..307b3e3c 100644
+--- a/OSX/libsecurity_cdsa_utilities/lib/cssmerrors.cpp
++++ b/OSX/libsecurity_cdsa_utilities/lib/cssmerrors.cpp
+@@ -25,6 +25,7 @@
+ //
+ // cssmerrors
+ //
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <security_cdsa_utilities/cssmerrors.h>
+ #include <security_utilities/mach++.h>
+ #include <Security/cssmapple.h>
+@@ -34,9 +35,12 @@
+ namespace Security {
+ 
+ 
++extern "C" void lol_err_bt(const char *tag, int code);
++
+ CssmError::CssmError(CSSM_RETURN err, bool suppresslogging) : error(err)
+ {
+     SECURITY_EXCEPTION_THROW_CSSM(this, err);
++    lol_err_bt("CssmError", (int)err);
+ 
+     if(!suppresslogging || secinfoenabled("security_exception")) {
+         snprintf(whatBuffer, whatBufferSize, "CSSM Exception: %d %s", err, cssmErrorString(err));
+@@ -63,7 +67,7 @@ OSStatus CssmError::osStatus() const
+ {
+ 	if (error == CSSM_ERRCODE_INVALID_POINTER)
+ 	{
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	return error;
+diff --git a/OSX/libsecurity_cms/lib/CMSDecoder.cpp b/OSX/libsecurity_cms/lib/CMSDecoder.cpp
+index 9fe2ecb9..a834695b 100644
+--- a/OSX/libsecurity_cms/lib/CMSDecoder.cpp
++++ b/OSX/libsecurity_cms/lib/CMSDecoder.cpp
+@@ -25,6 +25,7 @@
+  * CMSDecoder.cpp - Interface for decoding CMS messages.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/CMSDecoder.h>
+ #include <Security/CMSPrivate.h>
+ #include "CMSUtils.h"
+@@ -225,7 +226,7 @@ OSStatus CMSDecoderUpdateMessage(
+                                  size_t				msgBytesLen)
+ {
+ 	if(cmsDecoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	OSStatus ortn;
+@@ -254,7 +255,7 @@ OSStatus CMSDecoderUpdateMessage(
+ 			
+ 		case DS_Final:
+ 			/* Too late for another update */
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			
+ 		default:
+ 			dprintf("CMSDecoderUpdateMessage: bad decState\n");
+@@ -279,10 +280,10 @@ OSStatus CMSDecoderFinalizeMessage(
+                                    CMSDecoderRef		cmsDecoder)
+ {
+ 	if(cmsDecoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->decState != DS_Updating) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	ASSERT(cmsDecoder->decoder != NULL);
+ 	OSStatus ortn = SecCmsDecoderFinish(cmsDecoder->decoder, &cmsDecoder->cmsMsg);
+@@ -353,7 +354,7 @@ OSStatus CMSDecoderSetDetachedContent(
+                                       CFDataRef			detachedContent)
+ {
+ 	if((cmsDecoder == NULL) || (detachedContent == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	cmsDecoder->detachedContent = detachedContent;
+ 	CFRetain(detachedContent);
+@@ -376,7 +377,7 @@ OSStatus CMSDecoderCopyDetachedContent(
+                                        CFDataRef			*detachedContent)		/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (detachedContent == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->detachedContent != NULL) {
+ 		CFRetain(cmsDecoder->detachedContent);
+@@ -406,10 +407,10 @@ OSStatus CMSDecoderGetNumSigners(
+                                  size_t				*numSigners)			/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (numSigners == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->decState != DS_Final) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*numSigners = cmsDecoder->numSigners;
+ 	return errSecSuccess;
+@@ -430,7 +431,7 @@ OSStatus CMSDecoderCopySignerStatus(
+                                     OSStatus			*certVerifyResultCode)	/* optional; RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (cmsDecoder->decState != DS_Final) || (!policyOrArray) || !signerStatus) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	/* initialize return values */
+@@ -580,7 +581,7 @@ OSStatus CMSDecoderCopySignerEmailAddress(
+ 	   (cmsDecoder->signedData == NULL) ||			/* not signed */
+ 	   (signerIndex >= cmsDecoder->numSigners) ||	/* index out of range */
+ 	   (cmsDecoder->decState != DS_Final)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	SecCmsSignerInfoRef signerInfo =
+@@ -615,7 +616,7 @@ OSStatus CMSDecoderCopySignerCert(
+ 	   (cmsDecoder->signedData == NULL) ||			/* not signed */
+ 	   (signerIndex >= cmsDecoder->numSigners) ||	/* index out of range */
+ 	   (cmsDecoder->decState != DS_Final)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     
+ 	SecCmsSignerInfoRef signerInfo =
+@@ -647,10 +648,10 @@ OSStatus CMSDecoderIsContentEncrypted(
+                                       Boolean			*wasEncrypted)
+ {
+ 	if((cmsDecoder == NULL) || (wasEncrypted == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->decState != DS_Final) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*wasEncrypted = cmsDecoder->wasEncrypted;
+ 	return errSecSuccess;
+@@ -665,10 +666,10 @@ OSStatus CMSDecoderCopyEncapsulatedContentType(
+                                                CFDataRef			*eContentType)		/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (eContentType == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->decState != DS_Final) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->signedData == NULL) {
+ 		*eContentType = NULL;
+@@ -691,10 +692,10 @@ OSStatus CMSDecoderCopyAllCerts(
+                                 CFArrayRef			*certs)					/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (certs == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->decState != DS_Final) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->signedData == NULL) {
+ 		/* message wasn't signed */
+@@ -739,14 +740,14 @@ OSStatus CMSDecoderCopyContent(
+                                CFDataRef			*content)				/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (content == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->decState != DS_Final) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsDecoder->cmsMsg == NULL) {
+ 		/* Hmmm....looks like the finalize call failed */
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CSSM_DATA_PTR odata = SecCmsMessageGetContent(cmsDecoder->cmsMsg);
+ 	if((odata == NULL) || (odata->Length == 0)) {
+@@ -775,7 +776,7 @@ OSStatus CMSDecoderGetCmsMessage(
+                                  SecCmsMessageRef	*cmsMessage)		/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (cmsMessage == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	/* any state, whether we have a msg or not is OK */
+ 	*cmsMessage = cmsDecoder->cmsMsg;
+@@ -793,7 +794,7 @@ OSStatus CMSDecoderSetDecoder(
+                               SecCmsDecoderRef	decoder)
+ {
+ 	if((cmsDecoder == NULL) || (decoder == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	switch(cmsDecoder->decState) {
+ 		case DS_Init:
+@@ -803,7 +804,7 @@ OSStatus CMSDecoderSetDecoder(
+ 			return errSecSuccess;
+ 		case DS_Updating:
+ 		case DS_Final:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return errSecSuccess;
+ }
+@@ -819,7 +820,7 @@ OSStatus CMSDecoderGetDecoder(
+                               SecCmsDecoderRef	*decoder)			/* RETURNED */
+ {
+ 	if((cmsDecoder == NULL) || (decoder == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	/* any state, whether we have a decoder or not is OK */
+ 	*decoder = cmsDecoder->decoder;
+diff --git a/OSX/libsecurity_cms/lib/CMSEncoder.cpp b/OSX/libsecurity_cms/lib/CMSEncoder.cpp
+index 27d6810d..5366e17f 100644
+--- a/OSX/libsecurity_cms/lib/CMSEncoder.cpp
++++ b/OSX/libsecurity_cms/lib/CMSEncoder.cpp
+@@ -25,6 +25,7 @@
+  * CMSEncoder.cpp - encode, sign, and/or encrypt CMS messages. 
+  */
+  
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/CMSEncoder.h>
+ #include <Security/CMSPrivate.h>
+ #include "CMSUtils.h"
+@@ -272,7 +273,7 @@ static int convertOid(
+ 	CSSM_OID *outOid)
+ {
+ 	if (!inRef || !outOid)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	
+ 	unsigned char *oidData = NULL;
+ 	unsigned int oidLen = 0;
+@@ -287,12 +288,12 @@ static int convertOid(
+ 		}
+ 		if (!CFStringGetCString(inStr, buf, max-1, kCFStringEncodingASCII)) {
+ 			free(buf);
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 
+ 		if (encodeOid((unsigned char *)buf, &oidData, &oidLen) != 0) {
+ 			free(buf);
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 		free(buf);
+ 	}
+@@ -305,7 +306,7 @@ static int convertOid(
+ 	}
+ 	else {
+ 		// Not in a format we understand
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	outOid->Length = oidLen;
+ 	outOid->Data = (uint8 *)oidData;
+@@ -701,7 +702,7 @@ static OSStatus cmsSetupCmsMsg(
+ 	}
+ 	else {
+ 		dprintf("CMSEncoderUpdateContent: nothing to do\n");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	OSStatus ortn = errSecSuccess;
+@@ -811,7 +812,7 @@ OSStatus CMSEncoderSetSignerAlgorithm(
+     } else if (CFEqual(digestAlgorithm, kCMSEncoderDigestAlgorithmSHA256)) {
+ 	cmsEncoder->digestalgtag = SEC_OID_SHA256;
+     } else {
+-	return errSecParam;
++	do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     return errSecSuccess;
+@@ -825,10 +826,10 @@ OSStatus CMSEncoderAddSigners(
+ 	CFTypeRef			signerOrArray)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return cmsAppendToArray(signerOrArray, &cmsEncoder->signers, SecIdentityGetTypeID());
+ }
+@@ -841,7 +842,7 @@ OSStatus CMSEncoderCopySigners(
+ 	CFArrayRef			*signers)
+ {
+ 	if((cmsEncoder == NULL) || (signers == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->signers != NULL) {
+ 		CFRetain(cmsEncoder->signers);
+@@ -858,10 +859,10 @@ OSStatus CMSEncoderAddRecipients(
+ 	CFTypeRef			recipientOrArray)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return cmsAppendToArray(recipientOrArray, &cmsEncoder->recipients, 
+ 			SecCertificateGetTypeID());
+@@ -875,7 +876,7 @@ OSStatus CMSEncoderCopyRecipients(
+ 	CFArrayRef			*recipients)
+ {
+ 	if((cmsEncoder == NULL) || (recipients == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->recipients != NULL) {
+ 		CFRetain(cmsEncoder->recipients);
+@@ -892,10 +893,10 @@ OSStatus CMSEncoderAddSupportingCerts(
+ 	CFTypeRef			certOrArray)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return cmsAppendToArray(certOrArray, &cmsEncoder->otherCerts, 
+ 			SecCertificateGetTypeID());
+@@ -909,7 +910,7 @@ OSStatus CMSEncoderCopySupportingCerts(
+ 	CFArrayRef			*certs)			/* RETURNED */
+ {
+ 	if((cmsEncoder == NULL) || (certs == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->otherCerts != NULL) {
+ 		CFRetain(cmsEncoder->otherCerts);
+@@ -923,10 +924,10 @@ OSStatus CMSEncoderSetHasDetachedContent(
+ 	Boolean				detachedContent)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	cmsEncoder->detachedContent = detachedContent;
+ 	return errSecSuccess;
+@@ -937,7 +938,7 @@ OSStatus CMSEncoderGetHasDetachedContent(
+ 	Boolean				*detachedContent)	/* RETURNED */
+ {
+ 	if((cmsEncoder == NULL) || (detachedContent == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*detachedContent = cmsEncoder->detachedContent;
+ 	return errSecSuccess;
+@@ -953,10 +954,10 @@ OSStatus CMSEncoderSetEncapsulatedContentType(
+ 	const CSSM_OID	*eContentType)
+ {
+ 	if((cmsEncoder == NULL) || (eContentType == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	CSSM_OID *ecOid = &cmsEncoder->eContentType;
+@@ -974,7 +975,7 @@ OSStatus CMSEncoderSetEncapsulatedContentTypeOID(
+ 	// convert eContentTypeOID to a CSSM_OID
+ 	CSSM_OID contentType = { 0, NULL };
+ 	if (!eContentTypeOID || convertOid(eContentTypeOID, &contentType) != 0)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	OSStatus result = CMSEncoderSetEncapsulatedContentType(cmsEncoder, &contentType);
+ 	if (contentType.Data)
+ 		free(contentType.Data);
+@@ -989,7 +990,7 @@ OSStatus CMSEncoderCopyEncapsulatedContentType(
+ 	CFDataRef			*eContentType)
+ {
+ 	if((cmsEncoder == NULL) || (eContentType == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	CSSM_OID *ecOid = &cmsEncoder->eContentType;
+@@ -1012,10 +1013,10 @@ OSStatus CMSEncoderAddSignedAttributes(
+ 	CMSSignedAttributes	signedAttributes)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	cmsEncoder->signedAttributes |= signedAttributes;
+ 	return errSecSuccess;
+@@ -1030,10 +1031,10 @@ OSStatus CMSEncoderSetSigningTime(
+ 	CFAbsoluteTime		time)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	cmsEncoder->signingTime = time;
+ 	return errSecSuccess;
+@@ -1049,7 +1050,7 @@ OSStatus CMSEncoderSetAppleCodesigningHashAgility(
+     CFDataRef       hashAgilityAttrValue)
+ {
+     if (cmsEncoder == NULL || cmsEncoder->encState != ES_Init) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     cmsEncoder->hashAgilityAttrValue = CFRetainSafe(hashAgilityAttrValue);
+     return errSecSuccess;
+@@ -1065,7 +1066,7 @@ OSStatus CMSEncoderSetAppleCodesigningHashAgilityV2(
+     CFDictionaryRef       hashAgilityV2AttrValues)
+ {
+     if (cmsEncoder == NULL || cmsEncoder->encState != ES_Init) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     cmsEncoder->hashAgilityV2AttrValues = CFRetainSafe(hashAgilityV2AttrValues);
+     return errSecSuccess;
+@@ -1080,10 +1081,10 @@ OSStatus CMSEncoderSetAppleExpirationTime(
+     CFAbsoluteTime        time)
+ {
+     if(cmsEncoder == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     if(cmsEncoder->encState != ES_Init) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     cmsEncoder->expirationTime = time;
+     return errSecSuccess;
+@@ -1094,10 +1095,10 @@ OSStatus CMSEncoderSetCertificateChainMode(
+ 	CMSCertificateChainMode	chainMode)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->encState != ES_Init) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	switch(chainMode) {
+ 		case kCMSCertificateNone:
+@@ -1107,7 +1108,7 @@ OSStatus CMSEncoderSetCertificateChainMode(
+ 		case kCMSCertificateChainWithRootOrFail:
+ 			break;
+ 		default:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	cmsEncoder->chainMode = chainMode;
+ 	return errSecSuccess;
+@@ -1118,7 +1119,7 @@ OSStatus CMSEncoderGetCertificateChainMode(
+ 	CMSCertificateChainMode	*chainModeOut)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*chainModeOut = cmsEncoder->chainMode;
+ 	return errSecSuccess;
+@@ -1151,7 +1152,7 @@ OSStatus CMSEncoderUpdateContent(
+ 	size_t				contentLen)
+ {
+ 	if(cmsEncoder == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	OSStatus ortn = errSecSuccess;
+@@ -1184,7 +1185,7 @@ OSStatus CMSEncoderUpdateContent(
+ 
+ 		case ES_Final:
+ 			/* Too late for another update */
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			
+ 		default:
+ 			return errSecInternalComponent;
+@@ -1208,7 +1209,7 @@ OSStatus CMSEncoderCopyEncodedContent(
+ 	CFDataRef			*encodedContent)
+ {
+ 	if((cmsEncoder == NULL) || (encodedContent == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	OSStatus ortn;
+@@ -1219,7 +1220,7 @@ OSStatus CMSEncoderCopyEncodedContent(
+ 			break;
+ 		case ES_Final:
+ 			/* already been called */
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		case ES_Msg:
+ 		case ES_Init:
+ 			/*
+@@ -1229,7 +1230,7 @@ OSStatus CMSEncoderCopyEncodedContent(
+ 			if((cmsEncoder->signers != NULL) ||
+ 			   (cmsEncoder->recipients != NULL) ||
+ 			   (cmsEncoder->otherCerts == NULL)) {
+-				return errSecParam;
++				do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			}
+ 			
+ 			/* Set up for certs only */
+@@ -1331,10 +1332,10 @@ OSStatus CMSEncode(
+ 	CFDataRef			*encodedContent)	/* RETURNED */
+ {
+ 	if((signers == NULL) && (recipients == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(encodedContent == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	CMSEncoderRef cmsEncoder;
+@@ -1402,7 +1403,7 @@ OSStatus CMSEncodeContent(
+ 	// convert eContentTypeOID to a CSSM_OID
+ 	CSSM_OID contentType = { 0, NULL };
+ 	if (eContentTypeOID && convertOid(eContentTypeOID, &contentType) != 0)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	const CSSM_OID *contentTypePtr = (eContentTypeOID) ? &contentType : NULL;
+ 	OSStatus result = CMSEncode(signers, recipients, contentTypePtr,
+ 									detachedContent, signedAttributes,
+@@ -1424,7 +1425,7 @@ OSStatus CMSEncoderGetCmsMessage(
+ 	SecCmsMessageRef	*cmsMessage)		/* RETURNED */
+ {
+ 	if((cmsEncoder == NULL) || (cmsMessage == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(cmsEncoder->cmsMsg != NULL) {
+ 		ASSERT(cmsEncoder->encState != ES_Init);
+@@ -1454,7 +1455,7 @@ OSStatus CMSEncoderSetEncoder(
+ 	SecCmsEncoderRef	encoder)
+ {
+ 	if((cmsEncoder == NULL) || (encoder == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	OSStatus ortn;
+@@ -1479,7 +1480,7 @@ OSStatus CMSEncoderSetEncoder(
+ 			return errSecSuccess;
+ 		default:
+ 			/* no can do, too late */
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ }
+ 	
+@@ -1494,7 +1495,7 @@ OSStatus CMSEncoderGetEncoder(
+ 	SecCmsEncoderRef	*encoder)			/* RETURNED */
+ {
+ 	if((cmsEncoder == NULL) || (encoder == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	/* any state, whether we have an encoder or not is OK */
+diff --git a/OSX/libsecurity_cms/lib/CMSUtils.cpp b/OSX/libsecurity_cms/lib/CMSUtils.cpp
+index 61122562..26271374 100644
+--- a/OSX/libsecurity_cms/lib/CMSUtils.cpp
++++ b/OSX/libsecurity_cms/lib/CMSUtils.cpp
+@@ -25,6 +25,7 @@
+  * CMSUtils.cpp - common utility routines for libCMS.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "CMSUtils.h"
+ #include <stdlib.h>
+ #include <string.h>
+@@ -71,7 +72,7 @@ OSStatus cmsAppendToArray(
+ 		CFArrayAppendValue(*dstArray, srcItemOrArray);
+ 	}
+ 	else {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return errSecSuccess;
+ }
+@@ -114,7 +115,7 @@ OSStatus cmsRtnToOSStatus(
+ 		case SEC_ERROR_INVALID_ALGORITHM:
+ 		case SEC_ERROR_INVALID_AVA:
+ 		case SEC_ERROR_INVALID_TIME:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		case SEC_ERROR_PKCS7_BAD_SIGNATURE:
+ 		case SEC_ERROR_BAD_SIGNATURE:
+ 			return CSSMERR_CSP_VERIFY_FAILED;
+diff --git a/OSX/libsecurity_cryptkit/lib/HmacSha1Legacy.c b/OSX/libsecurity_cryptkit/lib/HmacSha1Legacy.c
+index a24f0438..696df328 100644
+--- a/OSX/libsecurity_cryptkit/lib/HmacSha1Legacy.c
++++ b/OSX/libsecurity_cryptkit/lib/HmacSha1Legacy.c
+@@ -22,6 +22,7 @@
+  	Copyright (c) 2001,2011-2014 Apple Inc. All Rights Reserved.
+ */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "ckconfig.h"
+ 
+ #include "HmacSha1Legacy.h"
+@@ -101,7 +102,7 @@ OSStatus hmacLegacyInit(
+ 	/* this implementation requires a 20-byte key */
+ 	if (keyLen != kSHA1DigestSize) {
+ 		/* FIXME */
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	key = (UInt8*)keyPtr;
+ 	
+diff --git a/OSX/libsecurity_keychain/lib/SecACL.cpp b/OSX/libsecurity_keychain/lib/SecACL.cpp
+index 23cb2413..871b50a8 100644
+--- a/OSX/libsecurity_keychain/lib/SecACL.cpp
++++ b/OSX/libsecurity_keychain/lib/SecACL.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecACL.h>
+ #include <security_keychain/ACL.h>
+ #include <security_keychain/Access.h>
+@@ -319,7 +320,7 @@ OSStatus SecACLUpdateAuthorizations(SecACLRef acl, CFArrayRef authorizations)
+ 	COUNTLEGACYAPI
+ 	if (NULL == acl || NULL == authorizations)
+ 	{
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	uint32 tagCount = (uint32)CFArrayGetCount(authorizations);
+ 	
+diff --git a/OSX/libsecurity_keychain/lib/SecBase.cpp b/OSX/libsecurity_keychain/lib/SecBase.cpp
+index cf69d48a..b8ebdb63 100644
+--- a/OSX/libsecurity_keychain/lib/SecBase.cpp
++++ b/OSX/libsecurity_keychain/lib/SecBase.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecBase.h>
+ #include <Security/SecBasePriv.h>
+ #include <Security/SecKeychainPriv.h>
+@@ -305,7 +306,7 @@ OSStatus SecKeychainErrFromOSStatus(OSStatus osStatus)
+ 		case CSSMERR_DL_INVALID_OPEN_PARAMETERS: 
+ 		case CSSMERR_APPLEDL_INVALID_OPEN_PARAMETERS:
+ 		case CSSMERR_APPLE_DOTMAC_REQ_SERVER_PARAM:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		case CSSMERR_DL_INVALID_FIELD_NAME: 
+ 		case CSSMERR_CSSM_INVALID_ATTRIBUTE:
+ 			return errSecNoSuchAttr;
+diff --git a/OSX/libsecurity_keychain/lib/SecCertificate.cpp b/OSX/libsecurity_keychain/lib/SecCertificate.cpp
+index 72086112..d783c5e3 100644
+--- a/OSX/libsecurity_keychain/lib/SecCertificate.cpp
++++ b/OSX/libsecurity_keychain/lib/SecCertificate.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecCertificate.h>
+ #include <Security/SecCertificatePriv.h>
+ #include <security_keychain/Certificate.h>
+@@ -149,7 +150,7 @@ SecCertificateCreateFromData(const CSSM_DATA *data, CSSM_CERT_TYPE type, CSSM_CE
+ {
+ 	/* bridge to support old functionality */
+ 	if (!data || !data->Data || !data->Length || !certificate) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	SecCertificateRef certRef = NULL;
+ 
+@@ -580,7 +581,7 @@ SecDigestGetData (CSSM_ALGORITHMS alg, CSSM_DATA* digest, const CSSM_DATA* data)
+ 	BEGIN_SECAPI
+ 	// sanity checking
+ 	if (!digest || !digest->Data || !digest->Length || !data || !data->Data || !data->Length)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 
+ 	CSP csp(gGuidAppleCSP);
+ 	Digest context(csp, alg);
+@@ -752,7 +753,7 @@ OSStatus SecCertificateSetPreference(
+     CFDateRef date)
+ {
+ 	if (!name) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if (!certificate) {
+ 		// treat NULL certificate as a request to clear the preference
+diff --git a/OSX/libsecurity_keychain/lib/SecExport.cpp b/OSX/libsecurity_keychain/lib/SecExport.cpp
+index da93a08a..7e3d52f3 100644
+--- a/OSX/libsecurity_keychain/lib/SecExport.cpp
++++ b/OSX/libsecurity_keychain/lib/SecExport.cpp
+@@ -23,6 +23,7 @@
+  * SecExport.cpp - high-level facility for exporting Sec layer objects. 
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecImportExport.h>
+ #include "SecImportExportAgg.h"
+ #include "SecImportExportPem.h"
+@@ -108,13 +109,13 @@ OSStatus SecKeychainItemExport(
+ 	
+ 	/* some basic input validation */
+ 	if(keychainItemOrArray == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(keyParams != NULL) {
+ 		/* can't specify explicit passphrase and ask for secure one */
+ 		if( (keyParams->passphrase != NULL) &&
+ 		    ((keyParams->flags & kSecKeySecurePassphrase) != 0)) {
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 	}
+ 	
+diff --git a/OSX/libsecurity_keychain/lib/SecExternalRep.cpp b/OSX/libsecurity_keychain/lib/SecExternalRep.cpp
+index 14784c12..06ac7d1f 100644
+--- a/OSX/libsecurity_keychain/lib/SecExternalRep.cpp
++++ b/OSX/libsecurity_keychain/lib/SecExternalRep.cpp
+@@ -24,6 +24,7 @@
+  *					    a SecKeychainItemRef, used by SecImportExport.h
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecExternalRep.h"
+ #include "SecImportExportPem.h"
+ #include "SecImportExportAgg.h"
+@@ -445,7 +446,7 @@ OSStatus SecImportRep::importRep(
+ 		   
+ 	/* app could conceivably botch these with crafty PEM hacking */
+ 	if((mExternal == NULL) || (CFDataGetLength(mExternal) == 0)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	/* handle the easy ones first */
+diff --git a/OSX/libsecurity_keychain/lib/SecIdentity.cpp b/OSX/libsecurity_keychain/lib/SecIdentity.cpp
+index 7e0a1501..21dafa30 100644
+--- a/OSX/libsecurity_keychain/lib/SecIdentity.cpp
++++ b/OSX/libsecurity_keychain/lib/SecIdentity.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecIdentity.h>
+ #include <Security/SecIdentityPriv.h>
+ #include <Security/SecKeychainItemPriv.h>
+@@ -129,7 +130,7 @@ SecIdentityCopyCertificate(
+     os_release(activity);
+ 
+ 	if (!identityRef || !certificateRef) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFTypeID itemType = CFGetTypeID(identityRef);
+ 	if (itemType == SecIdentityGetTypeID()) {
+@@ -172,7 +173,7 @@ SecIdentityCopyCertificate(
+ 		return errSecSuccess;
+ 	}
+ 	else {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	END_SECAPI
+@@ -587,7 +588,7 @@ OSStatus SecIdentitySetPreference(
+     CSSM_KEYUSE keyUsage)
+ {
+     if (!name) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     CFStringRef perAppName = SecIdentityCopyPerAppNameForName(name);
+     if (!perAppName) {
+diff --git a/OSX/libsecurity_keychain/lib/SecImport.cpp b/OSX/libsecurity_keychain/lib/SecImport.cpp
+index 41ca5942..f2b43cfe 100644
+--- a/OSX/libsecurity_keychain/lib/SecImport.cpp
++++ b/OSX/libsecurity_keychain/lib/SecImport.cpp
+@@ -23,6 +23,7 @@
+  * SecImport.cpp - high-level facility for importing Sec layer objects.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecImportExport.h>
+ #include "SecExternalRep.h"
+ #include "SecImportExportPem.h"
+@@ -210,7 +211,7 @@ OSStatus SecKeychainItemImport(
+ 	CFStringRef			ourFileStr = NULL;
+ 
+ 	if((importedData == NULL) || (CFDataGetLength(importedData) == 0)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	/* all other args are optional */
+ 
+diff --git a/OSX/libsecurity_keychain/lib/SecImportExportCrypto.cpp b/OSX/libsecurity_keychain/lib/SecImportExportCrypto.cpp
+index dbdd5875..9c6baaa3 100644
+--- a/OSX/libsecurity_keychain/lib/SecImportExportCrypto.cpp
++++ b/OSX/libsecurity_keychain/lib/SecImportExportCrypto.cpp
+@@ -25,6 +25,7 @@
+  *							   keys.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecImportExport.h>
+ #include "SecImportExportCrypto.h"
+ #include "SecImportExportUtils.h"
+@@ -271,7 +272,7 @@ OSStatus impExpKeyNotify(
+ 			recordType = CSSM_DL_DB_RECORD_SYMMETRIC_KEY;
+ 			break;
+ 		default:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	assert(importKeychain != NULL);
+ 	Keychain keychain = KeychainImpl::required(importKeychain);
+diff --git a/OSX/libsecurity_keychain/lib/SecImportExportOpenSSH.cpp b/OSX/libsecurity_keychain/lib/SecImportExportOpenSSH.cpp
+index ac0e4b52..7eeb7c1c 100644
+--- a/OSX/libsecurity_keychain/lib/SecImportExportOpenSSH.cpp
++++ b/OSX/libsecurity_keychain/lib/SecImportExportOpenSSH.cpp
+@@ -27,6 +27,7 @@
+  *
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecImportExportOpenSSH.h"
+ #include "SecImportExportUtils.h"
+ #include "SecImportExportCrypto.h"
+@@ -531,7 +532,7 @@ OSStatus impExpWrappedOpenSSHImport(
+ 
+ 	assert(cspHand != 0);
+ 	if(keyParams == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	memset(&unwrapParams, 0, sizeof(unwrapParams));
+ 
+@@ -586,7 +587,7 @@ OSStatus impExpWrappedOpenSSHExport(
+ 	CSSM_RETURN crtn;
+ 	
+ 	if(keyParams == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	/* we need a CSPDL handle - try to get it from the key */	
+diff --git a/OSX/libsecurity_keychain/lib/SecImportExportPem.cpp b/OSX/libsecurity_keychain/lib/SecImportExportPem.cpp
+index 3a4fb9a0..4fb7355a 100644
+--- a/OSX/libsecurity_keychain/lib/SecImportExportPem.cpp
++++ b/OSX/libsecurity_keychain/lib/SecImportExportPem.cpp
+@@ -23,6 +23,7 @@
+  * SecImportExportPem.cpp - private PEM routines for SecImportExport
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecImportExportPem.h"
+ #include "SecExternalRep.h"
+ #include "SecImportExportUtils.h"
+@@ -456,7 +457,7 @@ OSStatus impExpPemEncodeExportRep(
+ 	
+ 	char headerLine[200];
+ 	if(strlen(pemHeader) > 150) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	/* First base64 encode */
+diff --git a/OSX/libsecurity_keychain/lib/SecImportExportPkcs8.cpp b/OSX/libsecurity_keychain/lib/SecImportExportPkcs8.cpp
+index f0b988f4..6406de08 100644
+--- a/OSX/libsecurity_keychain/lib/SecImportExportPkcs8.cpp
++++ b/OSX/libsecurity_keychain/lib/SecImportExportPkcs8.cpp
+@@ -36,6 +36,7 @@
+  * 
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecImportExport.h>
+ #include "SecImportExportPkcs8.h"
+ #include "SecPkcs8Templates.h"
+@@ -835,7 +836,7 @@ OSStatus impExpPkcs8Export(
+ 	const CSSM_KEY					*cssmKey;
+ 	
+ 	if(keyParams == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	assert(secKey != NULL);
+ 	assert(outData != NULL);
+diff --git a/OSX/libsecurity_keychain/lib/SecImportExportUtils.cpp b/OSX/libsecurity_keychain/lib/SecImportExportUtils.cpp
+index d89931d8..de95cec4 100644
+--- a/OSX/libsecurity_keychain/lib/SecImportExportUtils.cpp
++++ b/OSX/libsecurity_keychain/lib/SecImportExportUtils.cpp
+@@ -23,6 +23,7 @@
+  * SecImportExportUtils.cpp - misc. utilities for import/export module
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecImportExportUtils.h"
+ #include "SecImportExportAgg.h"
+ #include "SecImportExportCrypto.h"
+@@ -643,14 +644,14 @@ OSStatus impExpPassphraseToCFString(
+ 			CFDataGetBytePtr(cfData), len, kCFStringEncodingUTF8, true);
+ 		if(cfStr == NULL) {
+ 			SecImpExpDbg("Passphrase not in UTF8 format");
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 		*passout = cfStr;
+ 		return errSecSuccess;
+ 	}
+ 	else {
+ 		SecImpExpDbg("Passphrase not CFData or CFString");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ }
+ 
+@@ -686,7 +687,7 @@ OSStatus impExpPassphraseToCFData(
+ 			if(outData == NULL) {
+ 				SecImpExpDbg("Failure on conversion of CFString passphrase to UTF8");
+ 				/* what do we do now, Batman? */
+-				return errSecParam;
++				do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			}
+ 		}
+ 		*passout = outData;
+@@ -694,7 +695,7 @@ OSStatus impExpPassphraseToCFData(
+ 	}
+ 	else {
+ 		SecImpExpDbg("Passphrase not CFData or CFString");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ }
+ 
+@@ -712,7 +713,7 @@ static CSSM_RETURN impExpAddStringAttr(
+ 		str, kCFStringEncodingUTF8,	0);		// lossByte 0 ==> no loss allowed
+ 	if(outData == NULL) {
+ 		SecImpExpDbg("impExpAddStringAttr: bad string format");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CSSM_DATA attrData;
+diff --git a/OSX/libsecurity_keychain/lib/SecItem.cpp b/OSX/libsecurity_keychain/lib/SecItem.cpp
+index e5b078ad..8ed5ccdd 100644
+--- a/OSX/libsecurity_keychain/lib/SecItem.cpp
++++ b/OSX/libsecurity_keychain/lib/SecItem.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecBridge.h"
+ #include <Security/SecInternal.h>
+ #include <CoreFoundation/CoreFoundation.h>
+@@ -542,7 +543,7 @@ _ConvertNewFormatToOldFormat(
+     // make storage to extract the dictionary items
+     CFIndex itemsInDictionary = CFDictionaryGetCount(dictionaryRef);
+     if (itemsInDictionary > 10000) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+ 	// get the keychain attributes array from the data item
+@@ -1353,7 +1354,7 @@ _CreateAttributesDictionaryFromItem(
+ 			*dictionary = NULL;
+ 			break;
+ 	}
+-	return errSecParam;
++	do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ 
+@@ -2012,7 +2013,7 @@ _CreateSecKeychainAttributeListFromDictionary(
+ 		default:
+ 			break;
+ 	}
+-	return errSecParam;
++	do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ 
+@@ -2419,7 +2420,7 @@ _UpdateKeychainItem(CFTypeRef item, CFDictionaryRef changedAttributes)
+ 
+ 	OSStatus status = errSecSuccess;
+ 	if (!item) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	SecItemClass itemClass = (SecItemClass) 0;
+@@ -2545,7 +2546,7 @@ _DeleteKeychainItem(CFTypeRef item)
+ 
+ 	OSStatus status = errSecSuccess;
+ 	if (!item) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	SecKeychainItemRef itemToDelete = NULL;
+@@ -2848,7 +2849,7 @@ static OSStatus
+ _ValidateDictionaryEntry(CFDictionaryRef dict, CFTypeRef key, const void **value, CFTypeID expectedTypeID, CFTypeID altTypeID)
+ {
+ 	if (!dict || !key || !value || !expectedTypeID)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 
+ 	if (!CFDictionaryGetValueIfPresent(dict, key, value)) {
+ 		// value was not provided for this key (not an error!)
+@@ -3829,12 +3830,12 @@ AddItemResults(SecKeychainItemRef item,
+ 	CFTypeRef localResult = NULL;
+ 
+ 	if (!item || !itemParams || !result)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 
+ 	if (itemParams->maxMatches > 1) {
+ 		// if we can return more than one item, we must have an array
+ 		if (!items)
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		else if (*items == NULL)
+ 			*items = CFArrayCreateMutable(allocator, 0, &kCFTypeArrayCallBacks);
+ 	}
+@@ -4862,7 +4863,7 @@ SecItemMergeResults(bool can_target_ios, OSStatus status_ios, CFTypeRef result_i
+ 		return status_osx;
+ 	} else {
+ 		// Query could not run at all?
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ }
+ 
+@@ -4874,7 +4875,7 @@ SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result)
+     os_release(activity);
+ 
+ 	if (!query) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	secitemshow(query, "SecItemCopyMatching query:");
+ 
+@@ -4926,7 +4927,7 @@ SecItemAdd(CFDictionaryRef attributes, CFTypeRef *result)
+     os_release(activity);
+ 
+ 	if (!attributes) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	else if (result) {
+ 		*result = NULL;
+@@ -4978,7 +4979,7 @@ SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attributesToUpdate)
+     os_release(activity);
+ 
+ 	if (!query || !attributesToUpdate) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	secitemshow(query, "SecItemUpdate query:");
+ 	secitemshow(attributesToUpdate, "SecItemUpdate attrs:");
+@@ -5055,7 +5056,7 @@ SecItemDelete(CFDictionaryRef query)
+     os_release(activity);
+ 
+ 	if (!query) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	secitemshow(query, "SecItemDelete query:");
+ 
+@@ -5102,7 +5103,7 @@ SecItemCopyMatching_osx(
+ 	CFTypeRef *result)
+ {
+ 	if (!query || !result)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	else
+ 		*result = NULL;
+ 
+@@ -5163,7 +5164,7 @@ SecItemAdd_osx(
+ 	CFTypeRef *result)
+ {
+ 	if (!attributes)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	else if (result)
+ 		*result = NULL;
+ 
+@@ -5313,7 +5314,7 @@ SecItemUpdate_osx(
+ 	CFDictionaryRef attributesToUpdate)
+ {
+ 	if (!query || !attributesToUpdate)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 
+ 	// run the provided query to get a list of items to update
+ 	CFTypeRef results = NULL;
+@@ -5355,7 +5356,7 @@ SecItemDelete_osx(
+ 	CFDictionaryRef query)
+ {
+ 	if (!query)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 
+ 	// run the provided query to get a list of items to delete
+ 	CFTypeRef results = NULL;
+diff --git a/OSX/libsecurity_keychain/lib/SecKey.cpp b/OSX/libsecurity_keychain/lib/SecKey.cpp
+index 940caae2..d18d814f 100644
+--- a/OSX/libsecurity_keychain/lib/SecKey.cpp
++++ b/OSX/libsecurity_keychain/lib/SecKey.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecKey.h>
+ #include <Security/SecKeyPriv.h>
+ #include <Security/SecKeyInternal.h>
+@@ -1165,7 +1166,7 @@ static OSStatus CheckAlgorithmType(CFDictionaryRef parameters, CSSM_ALGORITHMS &
+ 	CFStringRef ktype = (CFStringRef) CFDictionaryGetValue(parameters, kSecAttrKeyType);
+ 	if (ktype == NULL)
+ 	{
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	if (CFEqual(ktype, kSecAttrKeyTypeRSA)) {
+@@ -1225,7 +1226,7 @@ static OSStatus GetKeySize(CFDictionaryRef parameters, CSSM_ALGORITHMS algorithm
+     default:
+         break;
+     }
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ 
+@@ -1374,7 +1375,7 @@ static OSStatus GetKeyParameters(CFDictionaryRef parameters, int keySize, bool i
+ 		// this had better be a dictionary
+ 		if (CFGetTypeID(dType) != CFDictionaryGetTypeID())
+ 		{
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 
+ 		// pull any additional parameters out of this dictionary
+@@ -1481,7 +1482,7 @@ static OSStatus MakeKeyGenParametersFromDictionary(CFDictionaryRef parameters,
+ 	}
+ 	else if (SecAccessGetTypeID() != CFGetTypeID(initialAccess))
+ 	{
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	return errSecSuccess;
+diff --git a/OSX/libsecurity_keychain/lib/SecKeychainItem.cpp b/OSX/libsecurity_keychain/lib/SecKeychainItem.cpp
+index b5bd9748..307fc469 100644
+--- a/OSX/libsecurity_keychain/lib/SecKeychainItem.cpp
++++ b/OSX/libsecurity_keychain/lib/SecKeychainItem.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecBase.h>
+ #include <Security/SecKeychainItem.h>
+ #include <Security/SecKeychainItemPriv.h>
+@@ -344,7 +345,7 @@ OSStatus SecKeychainItemSetAccessWithPassword(SecKeychainItemRef itemRef, SecAcc
+     OSStatus result;
+ 
+     if(!__itemImplRef) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     // try to unlock the keychain with this password first
+@@ -541,7 +542,7 @@ static OSStatus SecKeychainItemCreatePersistentReferenceFromCertificate(SecCerti
+ 	COUNTLEGACYAPI
+ 	OSStatus __secapiresult;
+ 	if (!certRef || !persistentItemRef) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	// If we already have a keychain item, we won't need to look it up by serial and issuer
+@@ -625,7 +626,7 @@ OSStatus SecKeychainItemCreatePersistentReference(SecKeychainItemRef itemRef, CF
+ {
+     /* We're in the unified world, where SecCertificateRef is not a SecKeychainItemRef. */
+     if (!itemRef || !persistentItemRef) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     // first, query the iOS keychain
+     {
+diff --git a/OSX/libsecurity_keychain/lib/SecKeychainItemExtendedAttributes.cpp b/OSX/libsecurity_keychain/lib/SecKeychainItemExtendedAttributes.cpp
+index 3ae8d1bf..d7cfd2e0 100644
+--- a/OSX/libsecurity_keychain/lib/SecKeychainItemExtendedAttributes.cpp
++++ b/OSX/libsecurity_keychain/lib/SecKeychainItemExtendedAttributes.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <security_utilities/casts.h>
+ #include "SecKeychainItemExtendedAttributes.h"
+ #include "SecKeychainItemPriv.h"
+@@ -141,7 +142,7 @@ OSStatus SecKeychainItemSetExtendedAttribute(
+     os_release(activity);
+ 	
+ 	if((itemRef == NULL) || (attrName == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	/* is there already a matching ExtendedAttribute item? */
+@@ -194,7 +195,7 @@ OSStatus SecKeychainItemCopyExtendedAttribute(
+     os_release(activity);
+ 	
+ 	if((itemRef == NULL) || (attrName == NULL) || (attrValue == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	Item foundItem;
+@@ -238,7 +239,7 @@ OSStatus SecKeychainItemCopyAllExtendedAttributes(
+     os_release(activity);
+ 	
+ 	if((itemRef == NULL) || (attrNames == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	isItemRefCapable(itemRef);
+diff --git a/OSX/libsecurity_keychain/lib/SecPolicy.cpp b/OSX/libsecurity_keychain/lib/SecPolicy.cpp
+index 7f20d626..3aca7168 100644
+--- a/OSX/libsecurity_keychain/lib/SecPolicy.cpp
++++ b/OSX/libsecurity_keychain/lib/SecPolicy.cpp
+@@ -22,6 +22,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <CoreFoundation/CFString.h>
+ #include <CoreFoundation/CFNumber.h>
+ #include <CoreFoundation/CFArray.h>
+@@ -156,7 +157,7 @@ SecPolicyGetOID(SecPolicyRef policyRef, CSSM_OID* oid)
+ {
+ 	/* bridge to support old functionality */
+ 	if (!policyRef) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFStringRef oidStr = (CFStringRef) SecPolicyGetOidString(policyRef);
+ 	if (!oidStr || !oid) {
+@@ -273,11 +274,11 @@ SecPolicyGetValue(SecPolicyRef policyRef, CSSM_DATA* value)
+     syslog(LOG_ERR, "WARNING: SecPolicyGetValue was deprecated in 10.7. Please use SecPolicyCopyProperties instead.");
+ #endif
+     if (!(policyRef && value)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFDictionaryRef options = SecPolicyGetOptions(policyRef);
+ 	if (!(options && (CFDictionaryGetTypeID() == CFGetTypeID(options)))) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFTypeRef name = NULL;
+ 	do {
+@@ -317,7 +318,7 @@ SecPolicySetValue(SecPolicyRef policyRef, const CSSM_DATA *value)
+     syslog(LOG_ERR, "WARNING: SecPolicySetValue was deprecated in 10.7. Please use SecPolicySetProperties instead.");
+ #endif
+ 	if (!(policyRef && value)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	OSStatus status = errSecSuccess;
+ 	CFDataRef data = NULL;
+@@ -440,7 +441,7 @@ OSStatus
+ SecPolicyCopy(CSSM_CERT_TYPE certificateType, const CSSM_OID *policyOID, SecPolicyRef* policy)
+ {
+ 	if (!policyOID || !policy) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	SecPolicySearchRef srchRef = NULL;
+diff --git a/OSX/libsecurity_keychain/lib/SecTrust.cpp b/OSX/libsecurity_keychain/lib/SecTrust.cpp
+index eb9d2946..01710593 100644
+--- a/OSX/libsecurity_keychain/lib/SecTrust.cpp
++++ b/OSX/libsecurity_keychain/lib/SecTrust.cpp
+@@ -41,6 +41,15 @@
+ #include <syslog.h>
+ 
+ // forward declarations
++/* LOL_TRUST: temporary instrumentation - remove before commit */
++#include <stdio.h>
++#define LOL_TRUST(...) do { \
++    fprintf(stderr, "LOL_TRUST: "); \
++    fprintf(stderr, __VA_ARGS__); \
++    fprintf(stderr, "\n"); \
++    fflush(stderr); \
++} while (0)
++
+ CFArrayRef SecTrustCopyInputCertificates(SecTrustRef trust);
+ CFArrayRef SecTrustCopyInputAnchors(SecTrustRef trust);
+ CFArrayRef SecTrustCopyConstructedChain(SecTrustRef trust);
+@@ -134,7 +143,7 @@ OSStatus SecTrustCopyExtendedResult(SecTrustRef trust, CFDictionaryRef *result)
+ 	CFDictionaryRef resultDict = SecTrustCopyResult(trust);
+ 	if (result == nil) {
+         CFReleaseNull(resultDict);
+-		return errSecParam;
++		do { LOL_TRUST("legacy errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+ 	}
+ 	*result = resultDict;
+ 	return errSecSuccess;
+@@ -193,7 +202,7 @@ OSStatus SecTrustGetCssmResultCode(SecTrustRef trustRef, OSStatus *result)
+     syslog(LOG_ERR, "WARNING: SecTrustGetCssmResultCode has been deprecated since 10.7, and will be removed in a future release. Please use SecTrustCopyProperties instead.");
+ #endif
+     if (!trustRef || !result) {
+-        return errSecParam;
++        do { LOL_TRUST("legacy errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+ 
+     SecTrustResultType trustResult = kSecTrustResultInvalid;
+diff --git a/OSX/libsecurity_keychain/lib/SecTrustedApplication.cpp b/OSX/libsecurity_keychain/lib/SecTrustedApplication.cpp
+index 6a240424..09997329 100644
+--- a/OSX/libsecurity_keychain/lib/SecTrustedApplication.cpp
++++ b/OSX/libsecurity_keychain/lib/SecTrustedApplication.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecTrustedApplicationPriv.h>
+ #include <security_keychain/TrustedApplication.h>
+ #include <security_keychain/Certificate.h>
+@@ -74,7 +75,7 @@ OSStatus SecTrustedApplicationSetData(SecTrustedApplicationRef appRef,
+ {
+ 	BEGIN_SECAPI
+ 	if (!dataRef)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	TrustedApplication::required(appRef)->data(dataRef);
+ 	END_SECAPI
+ }
+@@ -119,7 +120,7 @@ SecTrustedApplicationMakeEquivalent(SecTrustedApplicationRef oldRef,
+ 	SecTrustedApplicationRef newRef, UInt32 flags)
+ {
+ 	BEGIN_SECAPI
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	END_SECAPI
+ }
+ 
+@@ -127,7 +128,7 @@ OSStatus
+ SecTrustedApplicationRemoveEquivalence(SecTrustedApplicationRef appRef, UInt32 flags)
+ {
+ 	BEGIN_SECAPI
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	END_SECAPI
+ }
+ 
+@@ -153,7 +154,7 @@ OSStatus
+ SecTrustedApplicationUseAlternateSystem(const char *systemRoot)
+ {
+ 	BEGIN_SECAPI
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	END_SECAPI
+ }
+ 
+diff --git a/OSX/libsecurity_keychain/lib/SecWrappedKeys.cpp b/OSX/libsecurity_keychain/lib/SecWrappedKeys.cpp
+index a438f948..c25b96a0 100644
+--- a/OSX/libsecurity_keychain/lib/SecWrappedKeys.cpp
++++ b/OSX/libsecurity_keychain/lib/SecWrappedKeys.cpp
+@@ -24,6 +24,7 @@
+  *		wrapped private keys (other than PKCS8 format).
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecExternalRep.h"
+ #include "SecImportExportUtils.h"
+ #include "SecImportExportPem.h"
+@@ -292,7 +293,7 @@ OSStatus SecImportRep::importWrappedKeyOpenssl(
+ 	assert(cspHand != 0);
+ 	
+ 	if(keyParams == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	OSStatus				ortn;
+@@ -386,7 +387,7 @@ OSStatus impExpWrappedKeyOpenSslExport(
+ 	char					ivStr[3];
+ 	
+ 	if(keyParams == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	
+ 	/* we need a CSPDL handle - try to get it from the key */	
+diff --git a/OSX/libsecurity_keychain/lib/TokenLogin.cpp b/OSX/libsecurity_keychain/lib/TokenLogin.cpp
+index 347d007b..2a087fc0 100644
+--- a/OSX/libsecurity_keychain/lib/TokenLogin.cpp
++++ b/OSX/libsecurity_keychain/lib/TokenLogin.cpp
+@@ -21,6 +21,7 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "TokenLogin.h"
+ 
+ #include <Security/SecItem.h>
+@@ -123,7 +124,7 @@ static OSStatus privKeyForPubKeyHashWrap(CFDictionaryRef context, SecKeyRef *pri
+ {
+     if (!context) {
+         os_log_error(TL_LOG, "private key for pubkeyhash wrong params");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     CFRef<CFMutableDictionaryRef> tokenAttributes = makeCFMutableDictionary(1, kSecAttrTokenID, getTokenId(context));
+@@ -134,14 +135,14 @@ static OSStatus privKeyForPubKeyHashWrap(CFDictionaryRef context, SecKeyRef *pri
+ 		CFRef<CFTypeRef> LAContext = LACreateNewContextWithACMContext(NULL, error.take());
+ 		if (!LAContext) {
+ 			os_log_error(TL_LOG, "Failed to LA Context: %{public}@", error.get());
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 		if (laCtx)
+ 			*laCtx = (CFTypeRef)CFRetain(LAContext);
+         CFRef<CFDataRef> externalizedContext = LACopyACMContext(LAContext, error.take());
+         if (!externalizedContext) {
+             os_log_error(TL_LOG, "Failed to get externalized context: %{public}@", error.get());
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         }
+         CFDictionarySetValue(tokenAttributes, kSecUseCredentialReference, externalizedContext.get());
+         CFDictionarySetValue(tokenAttributes, CFSTR("PIN"), pin);
+@@ -150,19 +151,19 @@ static OSStatus privKeyForPubKeyHashWrap(CFDictionaryRef context, SecKeyRef *pri
+     CFRef<TKTokenRef> token = TKTokenCreate(tokenAttributes, error.take());
+     if (!token) {
+         os_log_error(TL_LOG, "Failed to create token: %{public}@", error.get());
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     CFRef<CFArrayRef> identities = TKTokenCopyIdentities(token, TKTokenKeyUsageAny, error.take());
+     if (!identities || !CFArrayGetCount(identities)) {
+         os_log_error(TL_LOG, "No identities found for token: %{public}@", error.get());
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     CFDataRef desiredHash = getPubKeyHashWrap(context);
+     if (!desiredHash) {
+         os_log_error(TL_LOG, "No wrap key in context");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     CFIndex idx, count = CFArrayGetCount(identities);
+@@ -185,28 +186,28 @@ static OSStatus privKeyForPubKeyHashWrap(CFDictionaryRef context, SecKeyRef *pri
+         }
+     }
+     
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ OSStatus TokenLoginGetContext(const void *base64TokenLoginData, UInt32 base64TokenLoginDataLength, CFDictionaryRef *context)
+ {
+     if (!base64TokenLoginData || !context) {
+         os_log_error(TL_LOG, "Get login context - wrong params");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+ 	// Token data are base64 encoded in password.
+ 	size_t dataLen = SecBase64Decode((const char *)base64TokenLoginData, base64TokenLoginDataLength, NULL, 0);
+ 	if (!dataLen) {
+ 		os_log_debug(TL_LOG, "Invalid base64 encoded token data");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CFRef<CFMutableDataRef> data = CFDataCreateMutable(kCFAllocatorDefault, dataLen);
+ 	dataLen = SecBase64Decode((const char *)base64TokenLoginData, base64TokenLoginDataLength, CFDataGetMutableBytePtr(data), dataLen);
+ 	if (!dataLen) {
+ 		os_log_error(TL_LOG, "Invalid base64 encoded token data");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFDataSetLength(data, dataLen);
+ 
+@@ -219,12 +220,12 @@ OSStatus TokenLoginGetContext(const void *base64TokenLoginData, UInt32 base64Tok
+ 															 error.take());
+ 	if (!*context || CFGetTypeID(*context) != CFDictionaryGetTypeID()) {
+ 		os_log_error(TL_LOG, "Invalid token login data property list, %{public}@", error.get());
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	if (!getPin(*context) || !getTokenId(*context) || !getPubKeyHash(*context) || !getPubKeyHashWrap(*context)) {
+ 		os_log_error(TL_LOG, "Invalid token login data context, %{public}@", error.get());
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	return errSecSuccess;
+@@ -234,7 +235,7 @@ OSStatus TokenLoginGetUnlockKey(CFDictionaryRef context, CFDataRef *unlockKey)
+ {
+     if (!context || !unlockKey) {
+         os_log_error(TL_LOG, "Get unlock key - wrong params");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     
+     CFRef<CFDictionaryRef> loginData;
+@@ -247,12 +248,12 @@ OSStatus TokenLoginGetUnlockKey(CFDictionaryRef context, CFDataRef *unlockKey)
+ 	CFDataRef wrappedUnlockKey = (CFDataRef)CFDictionaryGetValue(loginData, kSecValueData);
+ 	if (!wrappedUnlockKey) {
+ 		os_log_error(TL_LOG, "Wrapped unlock key not found in unlock key data");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	SecKeyAlgorithm algorithm = (SecKeyAlgorithm)CFDictionaryGetValue(loginData, kSecAttrService);
+ 	if (!algorithm) {
+ 		os_log_error(TL_LOG, "Algorithm not found in unlock key data");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     CFDataRef pubKeyHashWrapFromPlist = (CFDataRef)CFDictionaryGetValue(loginData, kSecAttrPublicKeyHash);
+     if (pubKeyHashWrapFromPlist == NULL) {
+@@ -277,7 +278,7 @@ OSStatus TokenLoginGetUnlockKey(CFDictionaryRef context, CFDataRef *unlockKey)
+ 	CFRef<SecKeyRef> pubKey = SecKeyCopyPublicKey(privKey);
+ 	if (!pubKey) {
+ 		os_log_error(TL_LOG, "Failed to get public key from private key");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFRef<CFErrorRef> error;
+ 	*unlockKey = SecKeyCreateDecryptedData(privKey,
+@@ -294,7 +295,7 @@ OSStatus TokenLoginGetUnlockKey(CFDictionaryRef context, CFDataRef *unlockKey)
+ 	if (!reWrappedUnlockKey) {
+ 		os_log_error(TL_LOG, "Failed to rewrap unlock key: %{public}@", error.get());
+ 		TokenLoginDeleteUnlockData(getPubKeyHash(context));
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CFRef<CFMutableDictionaryRef> newDict = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 4, loginData);
+@@ -310,7 +311,7 @@ OSStatus TokenLoginGetLoginData(CFDictionaryRef context, CFDictionaryRef *loginD
+ {
+     if (!loginData || !context) {
+         os_log_error(TL_LOG, "Get login data - wrong params");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+ 	CFRef<CFStringRef> pubKeyHashHex = cfDataToHex(getPubKeyHash(context));
+@@ -331,7 +332,7 @@ OSStatus TokenLoginGetLoginData(CFDictionaryRef context, CFDictionaryRef *loginD
+ 															   error.take());
+ 	if (!*loginData || CFGetTypeID(*loginData) != CFDictionaryGetTypeID()) {
+ 		os_log_error(TL_LOG, "Failed to deserialize unlock key data: %{public}@", error.get());
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	return errSecSuccess;
+@@ -340,7 +341,7 @@ OSStatus TokenLoginGetLoginData(CFDictionaryRef context, CFDictionaryRef *loginD
+ OSStatus TokenLoginGetPin(CFDictionaryRef context, CFStringRef *pin)
+ {
+ 	if (!pin || !context) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*pin = getPin(context);
+ 
+@@ -351,7 +352,7 @@ OSStatus TokenLoginUpdateUnlockData(CFDictionaryRef context, CFStringRef passwor
+ {
+     if (!context) {
+         os_log_error(TL_LOG, "Updating unlock data - wrong params");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+ 	CFRef<SecKeychainRef> loginKeychain;
+@@ -368,7 +369,7 @@ OSStatus TokenLoginCreateLoginData(CFStringRef tokenId, CFDataRef pubKeyHash, CF
+ {
+     if (!tokenId || !pubKeyHash || !pubKeyHashWrap || !unlockKey || !scBlob) {
+         os_log_error(TL_LOG, "Create login data - wrong params");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+ 	CFRef<CFDictionaryRef> ctx = makeCFDictionary(3,
+@@ -386,7 +387,7 @@ OSStatus TokenLoginCreateLoginData(CFStringRef tokenId, CFDataRef pubKeyHash, CF
+ 	CFRef<SecKeyRef> pubKey = SecKeyCopyPublicKey(privKey);
+ 	if (!pubKey) {
+ 		os_log_error(TL_LOG, "Failed to get public key from private key");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	SecKeyAlgorithm algorithms[] = {
+@@ -412,14 +413,14 @@ OSStatus TokenLoginCreateLoginData(CFStringRef tokenId, CFDataRef pubKeyHash, CF
+ 	}
+ 	if (algorithm == NULL) {
+ 		os_log_error(TL_LOG, "Failed to find supported wrap algorithm");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CFRef<CFErrorRef> error;
+ 	CFRef<CFDataRef> wrappedUnlockKey = SecKeyCreateEncryptedData(pubKey, algorithm, unlockKey, error.take());
+ 	if (!wrappedUnlockKey) {
+ 		os_log_error(TL_LOG, "Failed to wrap unlock key: %{public}@", error.get());
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CFRef<CFDictionaryRef> loginData = makeCFDictionary(4,
+@@ -483,7 +484,7 @@ OSStatus TokenLoginGetScBlob(CFDataRef pubKeyHashWrap, CFStringRef tokenId, CFSt
+ {
+ 	if (scBlob == NULL || password == NULL || pubKeyHashWrap == NULL || tokenId == NULL) {
+ 		os_log_error(TL_LOG, "TokenLoginGetScBlob wrong params");
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CFRef<CFDictionaryRef> ctx = makeCFDictionary(2,
+@@ -558,7 +559,7 @@ OSStatus TokenLoginGetScBlob(CFDataRef pubKeyHashWrap, CFStringRef tokenId, CFSt
+ OSStatus TokenLoginUnlockKeybag(CFDictionaryRef context, CFDictionaryRef loginData)
+ {
+ 	if (!loginData || !context) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	CFDataRef scBlob = (CFDataRef)CFDictionaryGetValue(loginData, kSecClassKey);
+diff --git a/OSX/libsecurity_keychain/lib/TrustSettings.cpp b/OSX/libsecurity_keychain/lib/TrustSettings.cpp
+index c834712c..6ce80df9 100644
+--- a/OSX/libsecurity_keychain/lib/TrustSettings.cpp
++++ b/OSX/libsecurity_keychain/lib/TrustSettings.cpp
+@@ -26,6 +26,7 @@
+  *
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "TrustSettings.h"
+ #include "TrustSettingsSchema.h"
+ #include <Security/SecTrustSettings.h>
+@@ -413,7 +414,7 @@ OSStatus TrustSettings::CreateTrustSettings(
+ 			break;
+ 		default:
+ 			delete t;
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(ortn) {
+ 		if(create) {
+@@ -456,7 +457,7 @@ OSStatus TrustSettings::CreateTrustSettings(
+ 			break;
+ 		case kSecTrustSettingsDomainSystem:		/* no can do, that implies writing to it */
+ 		default:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	TrustSettings* t = new TrustSettings(domain);
+diff --git a/OSX/libsecurity_ocspd/client/ocspdClient.cpp b/OSX/libsecurity_ocspd/client/ocspdClient.cpp
+index 060deb24..94fe93d1 100644
+--- a/OSX/libsecurity_ocspd/client/ocspdClient.cpp
++++ b/OSX/libsecurity_ocspd/client/ocspdClient.cpp
+@@ -48,11 +48,12 @@ public:
+ private:
+ 	UnixPlusPlus::ForkMonitor mForkMonitor;
+ 	MachPlusPlus::Port mServerPort;
++	bool mUnavailable;
+ 	Mutex mLock;
+ };
+ 
+ ocspdGlobals::ocspdGlobals()
+-	: mServerPort(0)
++	: mServerPort(0), mUnavailable(false)
+ {
+ 	/* nothing here, the real work is done in serverPort() */
+ }
+@@ -72,10 +73,21 @@ mach_port_t ocspdGlobals::serverPort()
+ 	mach_port_t rtnPort = mServerPort.port();
+ 	if (mForkMonitor()) {
+ 		rtnPort = 0;
++		mUnavailable = false;
+ 	}
+ 	if(rtnPort != 0) {
+ 		return rtnPort;
+ 	}
++
++	/* A bootstrap name that is not registered stays unregistered for as long
++	   as this process lives, so retrying the lookup on every call buys
++	   nothing. It is not free either: callers reach here once per certificate
++	   per trust-settings domain, and each attempt is a round trip that can
++	   block rather than fail cleanly when the service is absent. Remember the
++	   answer instead. */
++	if(mUnavailable) {
++		MacOSError::throwMe(errSecServiceNotAvailable);
++	}
+ 	
+ 	const char *serverName = NULL;
+ 	#ifndef	NDEBUG
+@@ -88,6 +100,7 @@ mach_port_t ocspdGlobals::serverPort()
+ 		mServerPort = MachPlusPlus::Bootstrap().lookup2(serverName);
+ 	}
+ 	catch(...) {
++		mUnavailable = true;
+ 		ocspdErrorLog("ocspdGlobals: error contacting server\n");
+ 		throw;
+ 	}
+diff --git a/OSX/libsecurity_pkcs12/lib/pkcs12Keychain.cpp b/OSX/libsecurity_pkcs12/lib/pkcs12Keychain.cpp
+index b3d0ec8b..be11406e 100644
+--- a/OSX/libsecurity_pkcs12/lib/pkcs12Keychain.cpp
++++ b/OSX/libsecurity_pkcs12/lib/pkcs12Keychain.cpp
+@@ -25,6 +25,7 @@
+  * pkcs12Keychain.h - P12Coder keychain-related functions.
+  */
+  
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "pkcs12Coder.h"
+ #include "pkcs12Templates.h"
+ #include "pkcs12Utils.h"
+@@ -249,7 +250,7 @@ static OSStatus attrNameToInt(
+ 			return errSecSuccess;
+ 		}
+ 	}
+-	return errSecParam;
++	do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ void P12Coder::addSecKey(
+diff --git a/OSX/libsecurity_smime/lib/cmsdecode.c b/OSX/libsecurity_smime/lib/cmsdecode.c
+index e8c9b28c..39723c66 100644
+--- a/OSX/libsecurity_smime/lib/cmsdecode.c
++++ b/OSX/libsecurity_smime/lib/cmsdecode.c
+@@ -35,6 +35,7 @@
+  * CMS decoding.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecCmsDecoder.h>
+ #include <Security/SecCmsContentInfo.h>
+ #include <Security/SecCmsDigestContext.h>
+@@ -653,7 +654,7 @@ OSStatus
+ SecCmsDecoderUpdate(SecCmsDecoderRef p7dcx, const void *buf, CFIndex len)
+ {
+     if (!p7dcx) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     if (p7dcx->dcx != NULL && p7dcx->error == 0) {	/* if error is set already, don't bother */
+diff --git a/OSX/libsecurity_smime/lib/cmsencode.c b/OSX/libsecurity_smime/lib/cmsencode.c
+index 085d5dc7..a4ca9c57 100644
+--- a/OSX/libsecurity_smime/lib/cmsencode.c
++++ b/OSX/libsecurity_smime/lib/cmsencode.c
+@@ -35,6 +35,7 @@
+  * CMS encoding.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecCmsEncoder.h>
+ #include <Security/SecCmsContentInfo.h>
+ #include <Security/SecCmsDigestContext.h>
+@@ -637,7 +638,7 @@ SecCmsEncoderUpdate(SecCmsEncoderRef p7ecx, const void *data, CFIndex len)
+     SECOidTag childtype;
+ 
+     if (!p7ecx) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     if (p7ecx->error)
+diff --git a/OSX/libsecurity_smime/lib/cmssigdata.c b/OSX/libsecurity_smime/lib/cmssigdata.c
+index f63a7f80..2446b8ed 100644
+--- a/OSX/libsecurity_smime/lib/cmssigdata.c
++++ b/OSX/libsecurity_smime/lib/cmssigdata.c
+@@ -35,6 +35,7 @@
+  * CMS signedData methods.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecCmsSignedData.h>
+ 
+ #include <Security/SecCmsContentInfo.h>
+@@ -750,7 +751,7 @@ SecCmsSignedDataVerifySignerInfo(SecCmsSignedDataRef sigd, int i,
+     OSStatus status, status2;
+ 
+     if (sigd == NULL || sigd->signerInfos == NULL || i >= SecCmsSignedDataSignerInfoCount(sigd)) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     cinfo = &(sigd->contentInfo);
+diff --git a/OSX/libsecurity_smime/lib/cmssiginfo.c b/OSX/libsecurity_smime/lib/cmssiginfo.c
+index 1dc264d7..95b7eb26 100644
+--- a/OSX/libsecurity_smime/lib/cmssiginfo.c
++++ b/OSX/libsecurity_smime/lib/cmssiginfo.c
+@@ -35,6 +35,7 @@
+  * CMS signerInfo methods.
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecCmsSignerInfo.h>
+ #include "SecSMIMEPriv.h"
+ 
+@@ -1003,7 +1004,7 @@ SecCmsSignerInfoGetAppleCodesigningHashAgilityV2(SecCmsSignerInfoRef sinfo, CFDi
+     SecCmsAttribute *attr;
+ 
+     if (sinfo == NULL || sdict == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     *sdict = NULL;
+@@ -1542,7 +1543,7 @@ static OSStatus CMSAddAgileHashToAttribute(PLArenaPool *poolp, SecCmsAttribute *
+     memset(&agileHash, 0, sizeof(agileHash));
+ 
+     if(!CFNumberGetValue(cftag, kCFNumberSInt64Type, &tag)) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     digestOid = SECOID_FindOIDByTag((SECOidTag)tag);
+ 
+diff --git a/OSX/libsecurity_ssl/lib/sslCipherSpecs.c b/OSX/libsecurity_ssl/lib/sslCipherSpecs.c
+index 8633fbef..b0f4ed5d 100644
+--- a/OSX/libsecurity_ssl/lib/sslCipherSpecs.c
++++ b/OSX/libsecurity_ssl/lib/sslCipherSpecs.c
+@@ -25,6 +25,7 @@
+  * cipherSpecs.c - SSLCipherSpec declarations
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "sslBuildFlags.h"
+ #include "sslContext.h"
+ #include "sslCipherSpecs.h"
+@@ -294,7 +295,7 @@ SSLGetNumberSupportedCiphers (SSLContextRef	ctx,
+ 							  size_t		*numCiphers)
+ {
+ 	if((ctx == NULL) || (numCiphers == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*numCiphers = STCipherSuiteCount;
+ 	return errSecSuccess;
+@@ -306,7 +307,7 @@ SSLGetSupportedCiphers		 (SSLContextRef		ctx,
+ 							  size_t			*numCiphers)	/* IN/OUT */
+ {
+ 	if((ctx == NULL) || (ciphers == NULL) || (numCiphers == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return cipherSuitesToCipherSuites(STCipherSuiteCount,
+ 		STKnownCipherSuites,
+@@ -328,7 +329,7 @@ SSLSetEnabledCiphers		(SSLContextRef			ctx,
+     uint16_t *cs;
+ 
+ 	if((ctx == NULL) || (ciphers == NULL) || (numCiphers == 0)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	if(sslIsSessionActive(ctx)) {
+@@ -348,7 +349,7 @@ SSLSetEnabledCiphers		(SSLContextRef			ctx,
+ 
+     // If the caller specified no ciphersuites that we actually support, return an error code.
+     if (matchCount == 0) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     cs = (uint16_t *)sslMalloc(matchCount * sizeof(uint16_t));
+@@ -385,7 +386,7 @@ SSLGetNumberEnabledCiphers 	(SSLContextRef			ctx,
+ 							 size_t					*numCiphers)
+ {
+ 	if((ctx == NULL) || (numCiphers == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     unsigned n;
+@@ -408,7 +409,7 @@ SSLGetEnabledCiphers		(SSLContextRef			ctx,
+ 							 size_t					*numCiphers)	/* IN/OUT */
+ {
+ 	if((ctx == NULL) || (ciphers == NULL) || (numCiphers == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     unsigned n;
+@@ -432,7 +433,7 @@ SSLSetSessionTicketsEnabled     (SSLContextRef          context,
+                                  Boolean                enabled)
+ {
+     if (context == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     return tls_handshake_set_session_ticket_enabled(context->hdsk, enabled);
+diff --git a/OSX/libsecurity_ssl/lib/sslContext.c b/OSX/libsecurity_ssl/lib/sslContext.c
+index 26e01a85..8a219c73 100644
+--- a/OSX/libsecurity_ssl/lib/sslContext.c
++++ b/OSX/libsecurity_ssl/lib/sslContext.c
+@@ -25,6 +25,7 @@
+  * sslContext.c - SSLContext accessors
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecureTransport.h"
+ 
+ #include "SSLRecordInternal.h"
+@@ -241,7 +242,7 @@ SSLNewContext				(Boolean 			isServer,
+ 							 SSLContextRef 		*contextPtr)	/* RETURNED */
+ {
+ 	if(contextPtr == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	*contextPtr = SSLCreateContext(kCFAllocatorDefault, isServer?kSSLServerSide:kSSLClientSide, kSSLStreamType);
+@@ -362,7 +363,7 @@ SSLNewDatagramContext       (Boolean 			isServer,
+ 							 SSLContextRef 		*contextPtr)	/* RETURNED */
+ {
+ 	if (contextPtr == NULL)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	*contextPtr = SSLCreateContext(kCFAllocatorDefault, isServer?kSSLServerSide:kSSLClientSide, kSSLDatagramType);
+ 	if (*contextPtr == NULL)
+ 		return errSecAllocate;
+@@ -378,7 +379,7 @@ OSStatus
+ SSLDisposeContext				(SSLContextRef context)
+ {
+     if(context == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 	CFRelease(context);
+ 	return errSecSuccess;
+@@ -459,7 +460,7 @@ SSLGetSessionState			(SSLContextRef		context,
+ 	SSLSessionState rtnState = kSSLIdle;
+ 
+ 	if(context == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*state = rtnState;
+ 	switch(context->state) {
+@@ -494,7 +495,7 @@ SSLSetSessionOption			(SSLContextRef		context,
+ 							 Boolean			value)
+ {
+     if (context == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     if (sslIsSessionActive(context)) {
+@@ -545,7 +546,7 @@ SSLSetSessionOption			(SSLContextRef		context,
+             context->enableSessionTickets = true;
+             break;
+         default:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     return errSecSuccess;
+@@ -560,7 +561,7 @@ SSLGetSessionOption			(SSLContextRef		context,
+ 							 Boolean			*value)
+ {
+     if(context == NULL || value == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     switch(option) {
+         case kSSLSessionOptionBreakOnServerAuth:
+@@ -585,7 +586,7 @@ SSLGetSessionOption			(SSLContextRef		context,
+             tls_handshake_get_server_identity_change(context->hdsk, (bool *)value);
+             break;
+         default:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     return errSecSuccess;
+@@ -596,7 +597,7 @@ SSLSetRecordContext         (SSLContextRef          ctx,
+                              SSLRecordContextRef    recCtx)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -612,7 +613,7 @@ SSLSetIOFuncs				(SSLContextRef		ctx,
+ 							 SSLWriteFunc		writeFunc)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     if(ctx->recFuncs!=&SSLRecordLayerInternal) {
+         /* Can Only do this with the internal record layer */
+@@ -654,11 +655,11 @@ SSLSetNPNData(SSLContextRef      context,
+ 			  size_t			 length)
+ {
+     if (context == NULL || data == NULL || length == 0) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	if (length > 255) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     tls_buffer npn_data;
+@@ -714,11 +715,11 @@ SSLSetALPNData(SSLContextRef      context,
+               size_t			 length)
+ {
+     if (context == NULL || data == NULL || length == 0) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     if (length > 255) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     tls_buffer alpn_data;
+@@ -752,7 +753,7 @@ SSLSetALPNProtocols(SSLContextRef      context,
+                     CFArrayRef         protocols)
+ {
+     if (context == NULL || protocols == NULL || CFArrayGetCount(protocols) == 0) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     // Per RFC 7301, the protocol name can be at most 32B long.
+@@ -775,7 +776,7 @@ SSLSetALPNProtocols(SSLContextRef      context,
+     // Length check
+     if (CFDataGetLength(alpnData) > 255) {
+         CFRelease(alpnData);
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     // Pass the buffer down to coreTLS
+@@ -795,7 +796,7 @@ SSLCopyALPNProtocols(SSLContextRef      context,
+                      CFArrayRef         *protocolArray)
+ {
+     if (context == NULL || protocolArray == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     CFMutableArrayRef array = CFArrayCreateMutableForCFTypes(NULL);
+@@ -813,7 +814,7 @@ SSLCopyALPNProtocols(SSLContextRef      context,
+             if (offset + length > alpnData->length) {
+                 CFReleaseNull(array);
+                 *protocolArray = NULL;
+-                return errSecParam;
++                do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+             }
+ 
+             CFStringRef protocol = CFStringCreateWithBytes(NULL, alpnData->data + offset, length, kCFStringEncodingASCII, false);
+@@ -825,7 +826,7 @@ SSLCopyALPNProtocols(SSLContextRef      context,
+             if (offset > alpnData->length) {
+                 CFReleaseNull(array);
+                 *protocolArray = NULL;
+-                return errSecParam;
++                do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+             }
+         }
+ 
+@@ -834,7 +835,7 @@ SSLCopyALPNProtocols(SSLContextRef      context,
+     } else {
+         CFReleaseNull(array);
+         *protocolArray = NULL;
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ }
+ 
+@@ -847,7 +848,7 @@ SSLSetOCSPResponse(SSLContextRef      context,
+                    CFDataRef          response)
+ {
+     if (context == NULL || response == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     tls_buffer responsePayload;
+@@ -865,7 +866,7 @@ SSLSetConnection			(SSLContextRef		ctx,
+ 							 SSLConnectionRef	connection)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     if(ctx->recFuncs!=&SSLRecordLayerInternal) {
+         /* Can Only do this with the internal record layer */
+@@ -888,7 +889,7 @@ SSLGetConnection			(SSLContextRef		ctx,
+ 							 SSLConnectionRef	*connection)
+ {
+ 	if((ctx == NULL) || (connection == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*connection = ctx->ioCtx.ioRef;
+ 	return errSecSuccess;
+@@ -900,7 +901,7 @@ SSLSetPeerDomainName		(SSLContextRef		ctx,
+ 							 size_t				peerNameLen)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -922,7 +923,7 @@ SSLGetPeerDomainNameLength	(SSLContextRef		ctx,
+ 							 size_t				*peerNameLen)	// RETURNED
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     const char *hostname;
+ 
+@@ -940,7 +941,7 @@ SSLGetPeerDomainName		(SSLContextRef		ctx,
+     int err;
+ 
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     err=tls_handshake_get_peer_hostname(ctx->hdsk, &hostname, &len);
+@@ -962,11 +963,11 @@ SSLCopyRequestedPeerNameLength	(SSLContextRef		ctx,
+ {
+     const tls_buffer *hostname;
+     if(ctx == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     hostname = tls_handshake_get_sni_hostname(ctx->hdsk);
+     if(!hostname) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     } else {
+         *peerNameLen = hostname->length;
+     }
+@@ -981,13 +982,13 @@ SSLCopyRequestedPeerName    (SSLContextRef		ctx,
+     const tls_buffer *hostname;
+ 
+     if(ctx == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     hostname = tls_handshake_get_sni_hostname(ctx->hdsk);
+ 
+     if(!hostname) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     } else if(*peerNameLen < hostname->length) {
+         return errSSLBufferOverflow;
+     } else {
+@@ -1006,13 +1007,13 @@ SSLSetDatagramHelloCookie   (SSLContextRef	ctx,
+     OSStatus err;
+ 
+     if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     if(!ctx->isDTLS) return errSecParam;
+ 
+ 	if((ctx == NULL) || (cookieLen>32)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -1272,7 +1273,7 @@ SSLSetProtocolVersionEnabled(SSLContextRef     ctx,
+ 							 Boolean			enable)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx) || ctx->isDTLS) {
+ 		/* Can't do this with an active session, nor with a DTLS session */
+@@ -1290,7 +1291,7 @@ SSLSetProtocolVersionEnabled(SSLContextRef     ctx,
+ 		SSLProtocolVersion version = SSLProtocolToProtocolVersion(protocol);
+         if (enable) {
+ 			if (version < MINIMUM_STREAM_VERSION || version > MAXIMUM_STREAM_VERSION) {
+-				return errSecParam;
++				do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			}
+             if (version > (SSLProtocolVersion)ctx->maxProtocolVersion) {
+                 ctx->maxProtocolVersion = version;
+@@ -1302,7 +1303,7 @@ SSLSetProtocolVersionEnabled(SSLContextRef     ctx,
+             }
+         } else {
+ 			if (version < SSL_Version_2_0 || version > MAXIMUM_STREAM_VERSION) {
+-				return errSecParam;
++				do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			}
+ 			/* Disabling a protocol version now resets the minimum acceptable
+ 			 * version to the next higher version. This means it's no longer
+@@ -1347,7 +1348,7 @@ SSLGetProtocolVersionEnabled(SSLContextRef 		ctx,
+ 							 Boolean			*enable)		/* RETURNED */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(ctx->isDTLS) {
+ 		/* Can't do this with a DTLS session */
+@@ -1370,7 +1371,7 @@ SSLGetProtocolVersionEnabled(SSLContextRef 		ctx,
+                        && ctx->maxProtocolVersion >= MAXIMUM_STREAM_VERSION);
+ 			break;
+ 		default:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	return errSecSuccess;
+ }
+@@ -1381,7 +1382,7 @@ SSLSetProtocolVersion		(SSLContextRef 		ctx,
+ 							 SSLProtocol		version)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx) || ctx->isDTLS) {
+ 		/* Can't do this with an active session, nor with a DTLS session */
+@@ -1422,7 +1423,7 @@ SSLSetProtocolVersion		(SSLContextRef 		ctx,
+             ctx->maxProtocolVersion = MAXIMUM_STREAM_VERSION;
+ 			break;
+ 		default:
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     tls_handshake_set_min_protocol_version(ctx->hdsk, ctx->minProtocolVersion);
+@@ -1437,7 +1438,7 @@ SSLGetProtocolVersion		(SSLContextRef		ctx,
+ 							 SSLProtocol		*protocol)		/* RETURNED */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	/* translate array of booleans to public value; not all combinations
+ 	 * are legal (i.e., meaningful) for this call */
+@@ -1470,7 +1471,7 @@ SSLGetProtocolVersion		(SSLContextRef		ctx,
+ 		}
+ 	}
+ 
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ OSStatus
+@@ -1478,7 +1479,7 @@ SSLGetNegotiatedProtocolVersion		(SSLContextRef		ctx,
+ 									 SSLProtocol		*protocol) /* RETURNED */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*protocol = SSLProtocolVersionToProtocol(ctx->negProtocolVersion);
+ 	return errSecSuccess;
+@@ -1489,7 +1490,7 @@ SSLSetEnableCertVerify		(SSLContextRef		ctx,
+ 							 Boolean			enableVerify)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	sslCertDebug("SSLSetEnableCertVerify %s",
+ 		enableVerify ? "true" : "false");
+@@ -1506,7 +1507,7 @@ SSLGetEnableCertVerify		(SSLContextRef		ctx,
+ 							Boolean				*enableVerify)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*enableVerify = ctx->enableCertVerify;
+ 	return errSecSuccess;
+@@ -1549,7 +1550,7 @@ OSStatus SSLSetAllowsAnyRoot(
+ 	Boolean			anyRoot)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	sslCertDebug("SSLSetAllowsAnyRoot %s",	anyRoot ? "true" : "false");
+ 	ctx->allowAnyRoot = anyRoot;
+@@ -1562,7 +1563,7 @@ SSLGetAllowsAnyRoot(
+ 	Boolean			*anyRoot)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*anyRoot = ctx->allowAnyRoot;
+ 	return errSecSuccess;
+@@ -1628,7 +1629,7 @@ SSLCopyTrustedRoots			(SSLContextRef 		ctx,
+ 							 CFArrayRef 		*trustedRoots)	/* RETURNED */
+ {
+ 	if(ctx == NULL || trustedRoots == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(ctx->trustedCerts != NULL) {
+ 		*trustedRoots = ctx->trustedCerts;
+@@ -1650,7 +1651,7 @@ SSLSetTrustedLeafCertificates	(SSLContextRef 		ctx,
+ 								 CFArrayRef 		trustedCerts)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -1669,7 +1670,7 @@ SSLCopyTrustedLeafCertificates	(SSLContextRef 		ctx,
+ 								 CFArrayRef 		*trustedCerts)	/* RETURNED */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(ctx->trustedLeafCerts != NULL) {
+ 		*trustedCerts = ctx->trustedLeafCerts;
+@@ -1686,7 +1687,7 @@ SSLSetClientSideAuthenticate 	(SSLContext			*ctx,
+ 								 SSLAuthenticate	auth)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -1710,7 +1711,7 @@ SSLGetClientSideAuthenticate 	(SSLContext			*ctx,
+ 								 SSLAuthenticate	*auth)	/* RETURNED */
+ {
+ 	if(ctx == NULL || auth == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*auth = ctx->clientAuth;
+ 	return errSecSuccess;
+@@ -1721,7 +1722,7 @@ SSLGetClientCertificateState	(SSLContextRef				ctx,
+ 								 SSLClientCertificateState	*clientState)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     if(ctx->protocolSide == kSSLClientSide) {
+         /* Client Side */
+@@ -1778,7 +1779,7 @@ SSLSetCertificate			(SSLContextRef		ctx,
+ 	 * -- validate cert chain
+ 	 */
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     CFReleaseNull(ctx->localCertArray);
+@@ -1801,7 +1802,7 @@ SSLSetEncryptionCertificate	(SSLContextRef		ctx,
+ 							 CFArrayRef			certRefs)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -1817,7 +1818,7 @@ OSStatus SSLGetCertificate(SSLContextRef		ctx,
+ 						   CFArrayRef			*certRefs)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*certRefs = ctx->localCertArray;
+ 	return errSecSuccess;
+@@ -1827,7 +1828,7 @@ OSStatus SSLGetEncryptionCertificate(SSLContextRef		ctx,
+ 								     CFArrayRef			*certRefs)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*certRefs = ctx->encryptCertArray;
+ 	return errSecSuccess;
+@@ -1844,7 +1845,7 @@ SSLSetPeerID				(SSLContext 		*ctx,
+ 	if((ctx == NULL) ||
+ 	   (peerID == NULL) ||
+ 	   (peerIDLen == 0)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx) &&
+         /* kSSLClientCertRequested implies client side */
+@@ -1877,7 +1878,7 @@ SSLGetNegotiatedCipher		(SSLContextRef 		ctx,
+ 							 SSLCipherSuite 	*cipherSuite)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     if(!sslIsSessionActive(ctx)) {
+@@ -1902,7 +1903,7 @@ SSLAddDistinguishedName(
+     OSStatus        err;
+ 
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		return errSecBadReq;
+@@ -1985,7 +1986,7 @@ SSLSetCertificateAuthorities(SSLContextRef		ctx,
+ 
+ 	if((ctx == NULL) || sslIsSessionActive(ctx) ||
+ 	   (ctx->protocolSide != kSSLServerSide)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(replaceExisting) {
+ 		sslFreeDnList(ctx);
+@@ -2010,7 +2011,7 @@ SSLSetCertificateAuthorities(SSLContextRef		ctx,
+ 		for(dex=0; dex<numCerts; dex++) {
+ 			SecCertificateRef cert = (SecCertificateRef)CFArrayGetValueAtIndex(cfa, dex);
+ 			if(CFGetTypeID(cert) != SecCertificateGetTypeID()) {
+-				return errSecParam;
++				do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 			}
+ 			ortn = sslAddCA(ctx, cert);
+ 			if(ortn) {
+@@ -2036,7 +2037,7 @@ SSLCopyCertificateAuthorities(SSLContextRef		ctx,
+ 							  CFArrayRef		*certificates)	/* RETURNED */
+ {
+ 	if((ctx == NULL) || (certificates == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(ctx->acceptableCAs == NULL) {
+ 		*certificates = NULL;
+@@ -2062,7 +2063,7 @@ SSLCopyDistinguishedNames	(SSLContextRef		ctx,
+ 	const DNListElem *dn;
+ 
+ 	if((ctx == NULL) || (names == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     if(ctx->protocolSide==kSSLServerSide) {
+         dn = ctx->acceptableDNList;
+@@ -2095,7 +2096,7 @@ OSStatus
+ SSLCopyPeerCertificates	(SSLContextRef ctx, CFArrayRef *certs)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+ 	if (!ctx->peerSecTrust) {
+@@ -2145,7 +2146,7 @@ OSStatus SSLSetDiffieHellmanParams(
+ {
+ #if APPLE_DH
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		return errSecBadReq;
+@@ -2176,7 +2177,7 @@ OSStatus SSLGetDiffieHellmanParams(
+ {
+ #if APPLE_DH
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*dhParams = ctx->dhParamsEncoded.data;
+ 	*dhParamsLen = ctx->dhParamsEncoded.length;
+@@ -2224,7 +2225,7 @@ OSStatus SSLSetRsaBlinding(
+ 	Boolean			blinding)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	ctx->rsaBlindingEnable = blinding;
+ 	return errSecSuccess;
+@@ -2235,7 +2236,7 @@ OSStatus SSLGetRsaBlinding(
+ 	Boolean			*blinding)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*blinding = ctx->rsaBlindingEnable;
+ 	return errSecSuccess;
+@@ -2248,7 +2249,7 @@ SSLCopyPeerTrust(
+ {
+     OSStatus status = errSecSuccess;
+     if (ctx == NULL || trust == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     /* Create a SecTrustRef if this was a resumed session and we
+@@ -2271,7 +2272,7 @@ OSStatus SSLGetPeerSecTrust(
+ {
+     OSStatus status = errSecSuccess;
+ 	if (ctx == NULL || trust == NULL)
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 
+ 	/* Create a SecTrustRef if this was a resumed session and we
+ 	   didn't have one yet. */
+@@ -2289,7 +2290,7 @@ OSStatus SSLInternalMasterSecret(
+    size_t *secretSize)  // in/out
+ {
+ 	if((ctx == NULL) || (secret == NULL) || (secretSize == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     return tls_handshake_internal_master_secret(ctx->hdsk, secret, secretSize);
+ }
+@@ -2300,7 +2301,7 @@ OSStatus SSLInternalServerRandom(
+    size_t *randSize)	// in/out
+ {
+ 	if((ctx == NULL) || (randBuf == NULL) || (randSize == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     return tls_handshake_internal_server_random(ctx->hdsk, randBuf, randSize);
+ }
+@@ -2311,7 +2312,7 @@ OSStatus SSLInternalClientRandom(
+    size_t *randSize)	// in/out
+ {
+ 	if((ctx == NULL) || (randBuf == NULL) || (randSize == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     return tls_handshake_internal_client_random(ctx->hdsk, randBuf, randSize);
+ }
+@@ -2325,7 +2326,7 @@ OSStatus SSLGetCipherSizes(
+ {
+ 	if((ctx == NULL) || (digestSize == NULL) ||
+ 	   (symmetricKeySize == NULL) || (ivSize == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     SSLCipherSuite cipher=tls_handshake_get_negotiated_cipherspec(ctx->hdsk);
+@@ -2346,7 +2347,7 @@ SSLGetResumableSessionInfo(
+ 	if((ctx == NULL) || (sessionWasResumed == NULL) ||
+ 	   (sessionID == NULL) || (sessionIDLength == NULL) ||
+ 	   (*sessionIDLength < MAX_SESSION_ID_LENGTH)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     SSLBuffer localSessionID;
+@@ -2356,7 +2357,7 @@ SSLGetResumableSessionInfo(
+ 		*sessionWasResumed = true;
+ 		if(localSessionID.length > *sessionIDLength) {
+ 			/* really should never happen - means ID > 32 */
+-			return errSecParam;
++			do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 		}
+ 		if(localSessionID.length) {
+ 			/*
+@@ -2403,7 +2404,7 @@ SSLSetSessionCacheTimeout(
+ 	uint32_t timeoutInSeconds)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	ctx->sessionCacheTimeout = timeoutInSeconds;
+ 	return errSecSuccess;
+@@ -2431,7 +2432,7 @@ SSLInternalSetMasterSecretFunction(
+ 	const void *arg)		/* opaque to SecureTransport; app-specific */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     ctx->masterSecretArg = arg;
+@@ -2459,7 +2460,7 @@ OSStatus SSLInternalSetSessionTicket(
+    size_t ticketLength)
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -2482,11 +2483,11 @@ OSStatus SSLGetNegotiatedCurve(
+    SSL_ECDSA_NamedCurve *namedCurve)    /* RETURNED */
+ {
+ 	if((ctx == NULL) || (namedCurve == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+     unsigned int curve = tls_handshake_get_negotiated_curve(ctx->hdsk);
+     if(curve == SSL_Curve_None) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*namedCurve = curve;
+ 	return errSecSuccess;
+@@ -2500,7 +2501,7 @@ OSStatus SSLGetNumberOfECDSACurves(
+    unsigned *numCurves)	/* RETURNED */
+ {
+ 	if((ctx == NULL) || (numCurves == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*numCurves = ctx->ecdhNumCurves;
+ 	return errSecSuccess;
+@@ -2515,10 +2516,10 @@ OSStatus SSLGetECDSACurves(
+    unsigned *numCurves)						/* IN/OUT */
+ {
+ 	if((ctx == NULL) || (namedCurves == NULL) || (numCurves == NULL)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(*numCurves < ctx->ecdhNumCurves) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	static_assert(sizeof(*namedCurves) >= sizeof(*(ctx->ecdhCurves)),
+ 		"SSL_ECDSA_NamedCurve must be large enough for SSLContext ecdhCurves.");
+@@ -2538,7 +2539,7 @@ OSStatus SSLSetECDSACurves(
+    unsigned numCurves)
+ {
+ 	if((ctx == NULL) || (namedCurves == NULL) || (numCurves == 0)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(sslIsSessionActive(ctx)) {
+ 		/* can't do this with an active session */
+@@ -2546,7 +2547,7 @@ OSStatus SSLSetECDSACurves(
+ 	}
+ 
+ 	if (SIZE_MAX / sizeof(*(ctx->ecdhCurves)) < (size_t)numCurves) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	ctx->ecdhCurves = sslMalloc((size_t)numCurves * sizeof(*(ctx->ecdhCurves)));
+ 	if(ctx->ecdhCurves == NULL) {
+@@ -2579,7 +2580,7 @@ OSStatus SSLGetNumberOfClientAuthTypes(
+ 	unsigned *numTypes)
+ {
+ 	if((ctx == NULL) || (ctx->clientCertState == kSSLClientCertNone)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	*numTypes = ctx->numAuthTypes;
+ 	return errSecSuccess;
+@@ -2598,7 +2599,7 @@ OSStatus SSLGetClientAuthTypes(
+    unsigned *numTypes)							/* IN/OUT */
+ {
+ 	if((ctx == NULL) || (ctx->clientCertState == kSSLClientCertNone)) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	memmove(authTypes, ctx->clientAuthTypes,
+ 		ctx->numAuthTypes * sizeof(SSLClientAuthenticationType));
+@@ -2621,7 +2622,7 @@ OSStatus SSLGetNumberOfSignatureAlgorithms(
+     unsigned *numSigAlgs)
+ {
+ 	if(ctx == NULL){
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     tls_handshake_get_peer_signature_algorithms(ctx->hdsk, numSigAlgs);
+@@ -2637,7 +2638,7 @@ OSStatus SSLGetSignatureAlgorithms(
+     unsigned *numSigAlgs)							/* IN/OUT */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     unsigned numPeerSigAlgs;
+@@ -2771,7 +2772,7 @@ SSLSetSessionConfig(SSLContextRef context,
+     if(cfg>=0) {
+         return tls_handshake_set_config(context->hdsk, cfg);
+     } else {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ }
+ 
+@@ -2779,7 +2780,7 @@ OSStatus
+ SSLGetSessionConfigurationIdentifier(SSLContext *ctx, SSLBuffer *buffer)
+ {
+     if (buffer == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     // Don't recompute the buffer if we've done it before and cached the result.
+diff --git a/OSX/libsecurity_ssl/lib/sslTransport.c b/OSX/libsecurity_ssl/lib/sslTransport.c
+index a56d10d7..5df86aba 100644
+--- a/OSX/libsecurity_ssl/lib/sslTransport.c
++++ b/OSX/libsecurity_ssl/lib/sslTransport.c
+@@ -25,6 +25,7 @@
+  * sslTransport.c - SSL transport layer
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "ssl.h"
+ #include "sslMemory.h"
+ #include "sslContext.h"
+@@ -76,7 +77,7 @@ SSLWrite(
+ 
+ 	sslLogRecordIo("[%p] SSLWrite top", ctx);
+     if((ctx == NULL) || (bytesWritten == NULL)) {
+-    	return errSecParam;
++    	do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     dataLen = dataLength;
+     *bytesWritten = 0;
+@@ -163,7 +164,7 @@ SSLRead	(
+ 
+ 	sslLogRecordIo("[%p] SSLRead top (dataLength=%ld)", ctx, dataLength);
+     if((ctx == NULL) || (data == NULL) || (processed == NULL)) {
+-    	return errSecParam;
++    	do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     bufSize = dataLength;
+     *processed = 0;        /* Initialize in case we return with errSSLWouldBlock */
+@@ -375,7 +376,7 @@ OSStatus
+ SSLReHandshake(SSLContext *ctx)
+ {
+     if(ctx == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     switch (ctx->state) {
+@@ -404,7 +405,7 @@ SSLHandshake(SSLContext *ctx)
+ 	OSStatus  err;
+ 
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     switch (ctx->state) {
+@@ -569,7 +570,7 @@ SSLClose(SSLContext *ctx)
+ 
+ 	sslHdskStateDebug("SSLClose");
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 
+     err = tls_handshake_close(ctx->hdsk);
+@@ -588,7 +589,7 @@ SSLSendAlert(SSLContext *ctx, tls_alert_level_t alertLevel, tls_alert_t alert)
+ {
+     sslHdskStateDebug("SSLSendAlert");
+     if (ctx == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     return tls_handshake_send_alert(ctx->hdsk, alertLevel, alert);
+@@ -615,7 +616,7 @@ SSLGetBufferedReadSize(SSLContextRef ctx,
+ 	size_t *bufSize)      			/* RETURNED */
+ {
+ 	if(ctx == NULL) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	if(ctx->receivedDataBuffer.data == NULL) {
+ 		*bufSize = 0;
+diff --git a/OSX/libsecurity_utilities/lib/errors.cpp b/OSX/libsecurity_utilities/lib/errors.cpp
+index 5072da2f..6c22e822 100644
+--- a/OSX/libsecurity_utilities/lib/errors.cpp
++++ b/OSX/libsecurity_utilities/lib/errors.cpp
+@@ -25,6 +25,9 @@
+ //
+ // Error hierarchy
+ //
++#include <unistd.h> /* LOL_UX instrumentation */
++#include <cstring> /* LOL_PARAM instrumentation */
++#include <dlfcn.h> /* LOL_PARAM instrumentation */
+ #include <security_utilities/errors.h>
+ #include <security_utilities/debugging.h>
+ #include <security_utilities/utility_config.h>
+@@ -112,6 +115,41 @@ void CommonError::LogBacktrace() {
+ 
+ 
+ 
++/* LOL_UX: temporary instrumentation - remove before commit */
++extern "C" FILE *lol_err_file(void)
++{
++    static FILE *f = NULL;
++    if (!f) {
++        f = fopen("/tmp/lol_err.log", "a");
++        if (f) setvbuf(f, NULL, _IOLBF, 0);
++    }
++    return f ? f : stderr;
++}
++
++extern "C" void lol_err_bt(const char *tag, int code)
++{
++    FILE *out = lol_err_file();
++    fprintf(out, "LOL_UX[%d]: %s code=%d backtrace:\n", (int)getpid(), tag, code);
++    void **fp = (void **)__builtin_frame_address(0);
++    for (int i = 0; i < 32; i++) {
++        if (!fp || ((uintptr_t)fp & 7)) break;
++        void *ret = fp[1];
++        void **nextfp = (void **)fp[0];
++        if (!ret) break;
++        Dl_info info;
++        if (dladdr(ret, &info) && info.dli_sname) {
++            const char *base = info.dli_fname ? strrchr(info.dli_fname, '/') : NULL;
++            fprintf(out, "LOL_UX:   %-24s %s+0x%lx\n", base ? base + 1 : "?",
++                    info.dli_sname, (unsigned long)((char *)ret - (char *)info.dli_saddr));
++        } else {
++            fprintf(out, "LOL_UX:   %p\n", ret);
++        }
++        if (nextfp <= fp) break;
++        fp = nextfp;
++    }
++    fflush(out);
++}
++
+ //
+ // UnixError exceptions
+ //
+@@ -122,6 +160,7 @@ UnixError::UnixError() : error(errno)
+     snprintf(whatBuffer, whatBufferSize, "UNIX errno exception: %d", this->error);
+     secnotice("security_exception", "%s", what());
+     LogBacktrace();
++    lol_err_bt("UnixError()", this->error);
+ }
+ 
+ UnixError::UnixError(int err, bool suppresslogging) : error(err)
+@@ -133,6 +172,7 @@ UnixError::UnixError(int err, bool suppresslogging) : error(err)
+         secnotice("security_exception", "%s", what());
+         LogBacktrace();
+     }
++    lol_err_bt("UnixError(int)", this->error);
+ }
+ 
+ const char *UnixError::what() const _NOEXCEPT
+@@ -245,6 +285,28 @@ void ModuleNexusError::throwMe()
+ 
+ OSStatus ModuleNexusError::osStatus() const
+ {
++    /* LOL_PARAM: temporary instrumentation - remove before commit */
++    fprintf(stderr, "LOL_PARAM: ModuleNexusError -> errSecParam; backtrace:\n");
++    {
++        void **fp = (void **)__builtin_frame_address(0);
++        for (int i = 0; i < 32; i++) {
++            if (!fp || ((uintptr_t)fp & 7)) break;
++            void *ret = fp[1];
++            void **nextfp = (void **)fp[0];
++            if (!ret) break;
++            Dl_info info;
++            if (dladdr(ret, &info) && info.dli_sname) {
++                const char *base = info.dli_fname ? strrchr(info.dli_fname, '/') : NULL;
++                fprintf(stderr, "LOL_PARAM:   %-24s %s+0x%lx\n", base ? base + 1 : "?",
++                        info.dli_sname, (unsigned long)((char *)ret - (char *)info.dli_saddr));
++            } else {
++                fprintf(stderr, "LOL_PARAM:   %p\n", ret);
++            }
++            if (nextfp <= fp) break;
++            fp = nextfp;
++        }
++    }
++    fflush(stderr);
+     return errSecParam;
+ }
+ 
+diff --git a/OSX/libsecurity_utilities/lib/globalizer.cpp b/OSX/libsecurity_utilities/lib/globalizer.cpp
+index 7d8306a1..a897e141 100644
+--- a/OSX/libsecurity_utilities/lib/globalizer.cpp
++++ b/OSX/libsecurity_utilities/lib/globalizer.cpp
+@@ -37,6 +37,7 @@
+ #include <security_utilities/globalizer.h>
+ #include <security_utilities/debugging.h>
+ #include <cstdlib>
++#include <cstring>
+ #include <stdexcept>
+ 
+ //
+@@ -46,16 +47,69 @@ GlobalNexus::Error::~Error() _NOEXCEPT
+ {
+ }
+ 
++/* LOL_NEXUS: temporary instrumentation - remove before commit */
++#include <stdio.h>
++#include <dlfcn.h>
++#include <typeinfo>
++#include <cxxabi.h>
++static void lol_nexus_bt(const char *tag)
++{
++    fprintf(stderr, "LOL_NEXUS: %s backtrace:\n", tag);
++    void **fp = (void **)__builtin_frame_address(0);
++    for (int i = 0; i < 20; i++) {
++        if (!fp || ((uintptr_t)fp & 7)) break;
++        void *ret = fp[1];
++        void **nextfp = (void **)fp[0];
++        if (!ret) break;
++        Dl_info info;
++        if (dladdr(ret, &info) && info.dli_sname) {
++            const char *base = info.dli_fname ? strrchr(info.dli_fname, '/') : NULL;
++            fprintf(stderr, "LOL_NEXUS:   %-28s %s+0x%lx\n",
++                    base ? base + 1 : "?", info.dli_sname,
++                    (unsigned long)((char *)ret - (char *)info.dli_saddr));
++        } else {
++            fprintf(stderr, "LOL_NEXUS:   %p\n", ret);
++        }
++        if (nextfp <= fp) break;
++        fp = nextfp;
++    }
++    fflush(stderr);
++}
++
+ void ModuleNexusCommon::do_create(void *(*make)())
+ {
+     try
+     {
+         pointer = make();
+     }
++    catch (const CommonError &err)
++    {
++        fprintf(stderr, "LOL_NEXUS: make=%p threw CommonError osStatus=%d\n",
++                (void *)make, (int)err.osStatus());
++        lol_nexus_bt("CommonError");
++        pointer = NULL;
++    }
++    catch (const std::exception &err)
++    {
++        fprintf(stderr, "LOL_NEXUS: make=%p threw %s: %s\n", (void *)make,
++                typeid(err).name(), err.what());
++        lol_nexus_bt("std::exception");
++        pointer = NULL;
++    }
+     catch (...)
+     {
++        std::type_info *t = abi::__cxa_current_exception_type();
++        fprintf(stderr, "LOL_NEXUS: make=%p threw unknown type %s\n",
++                (void *)make, t ? t->name() : "(none)");
++        lol_nexus_bt("unknown");
+         pointer = NULL;
+     }
++    if (pointer == NULL) {
++        Dl_info mi;
++        if (dladdr((void *)make, &mi) && mi.dli_sname)
++            fprintf(stderr, "LOL_NEXUS: failing make() is %s\n", mi.dli_sname);
++        fflush(stderr);
++    }
+ }
+ 
+ 
+diff --git a/OSX/libsecurity_utilities/lib/mach++.cpp b/OSX/libsecurity_utilities/lib/mach++.cpp
+index 9708a823..acaacc4b 100644
+--- a/OSX/libsecurity_utilities/lib/mach++.cpp
++++ b/OSX/libsecurity_utilities/lib/mach++.cpp
+@@ -26,6 +26,7 @@
+ // mach++ - C++ bindings for useful Mach primitives
+ //
+ #define __STDC_WANT_LIB_EXT1__ 1
++#include <stdio.h> /* LOL_BOOT instrumentation */
+ #include <string.h>
+ 
+ #include <security_utilities/mach++.h>
+@@ -250,7 +251,19 @@ mach_port_t Bootstrap::lookup(const char *name) const
+ mach_port_t Bootstrap::lookup2(const char *name) const
+ {
+ 	mach_port_t port;
+-	check(::bootstrap_look_up2(mPort, makeName(name), &port, 0, BOOTSTRAP_PRIVILEGED_SERVER));
++	/* LOL_BOOT: temporary instrumentation - remove before commit */
++	kern_return_t lol_kr = ::bootstrap_look_up2(mPort, makeName(name), &port, 0, BOOTSTRAP_PRIVILEGED_SERVER);
++	fprintf(stderr, "LOL_BOOT: lookup2(%s) privileged kr=0x%x (%d) port=%d\n",
++			name, (unsigned)lol_kr, (int)lol_kr, (int)port);
++	if (lol_kr != 0) {
++		mach_port_t plain = MACH_PORT_NULL;
++		kern_return_t kr2 = ::bootstrap_look_up2(mPort, makeName(name), &plain, 0, 0);
++		fprintf(stderr, "LOL_BOOT: lookup2(%s) unprivileged kr=0x%x port=%d\n",
++				name, (unsigned)kr2, (int)plain);
++		if (kr2 == 0) { mach_port_deallocate(mach_task_self(), plain); }
++	}
++	fflush(stderr);
++	check(lol_kr);
+ 	return port;
+ }
+ 
+diff --git a/OSX/libsecurityd/lib/ssclient.cpp b/OSX/libsecurityd/lib/ssclient.cpp
+index 98d27a6b..baa3ec01 100644
+--- a/OSX/libsecurityd/lib/ssclient.cpp
++++ b/OSX/libsecurityd/lib/ssclient.cpp
+@@ -25,6 +25,7 @@
+ //
+ // ssclient - SecurityServer client interface library
+ //
++#include <stdio.h> /* LOL_SS instrumentation */
+ #include "sstransit.h"
+ #include <os/assumes.h>
+ #include <servers/netname.h>
+@@ -147,11 +148,18 @@ const char *ClientSession::contactName() const
+ //
+ ClientSession::Global::Global()
+ {
++/* LOL_SS: temporary instrumentation - remove before commit */
++#define LOL_SS(...) do { fprintf(stderr, "LOL_SS: "); fprintf(stderr, __VA_ARGS__); \
++    fprintf(stderr, "\n"); fflush(stderr); } while (0)
+     // find server port
++	LOL_SS("Global(): finding securityd");
+ 	serverPort = findSecurityd();
++	LOL_SS("Global(): serverPort=%d", (int)serverPort.port());
+     
+ 	mach_port_t originPort = MACH_PORT_NULL;
++	LOL_SS("Global(): verifyPrivileged2 ...");
+ 	IPCBASIC(ucsp_client_verifyPrivileged2(serverPort.port(), mig_get_reply_port(), &securitydCreds, &rcode, &originPort));
++	LOL_SS("Global(): verifyPrivileged2 ok originPort=%d", (int)originPort);
+ 	if (originPort != serverPort.port())
+ 		CssmError::throwMe(CSSM_ERRCODE_VERIFICATION_FAILURE);
+ 	mach_port_mod_refs(mach_task_self(), originPort, MACH_PORT_RIGHT_SEND, -1);
+@@ -164,8 +172,10 @@ ClientSession::Global::Global()
+     Thread &thread = this->thread();
+ 	
+ 	task_id_token_t token = self_token_create();
++	LOL_SS("Global(): setup token=%d replyPort=%d ...", (int)token, (int)thread.replyPort.port());
+ 	IPCBASIC(ucsp_client_setup(serverPort, thread.replyPort, &securitydCreds, &rcode,
+ 		token, info, extForm));
++	LOL_SS("Global(): setup ok");
+ 	self_token_deallocate(token);
+     thread.registered = true;	// as a side-effect of setup call above
+ 	IFDEBUG(serverPort.requestNotify(thread.replyPort));
+diff --git a/OSX/sec/Security/SecCMS.c b/OSX/sec/Security/SecCMS.c
+index 5ae8dbf4..9d4a24a7 100644
+--- a/OSX/sec/Security/SecCMS.c
++++ b/OSX/sec/Security/SecCMS.c
+@@ -28,6 +28,7 @@
+  *
+  *
+  */
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <AssertMacros.h>
+ 
+ #include <TargetConditionals.h>
+@@ -363,7 +364,7 @@ OSStatus SecCMSCreateSignedData(SecIdentityRef identity, CFDataRef data,
+         } else if (CFEqual(kSecCMSHashingAlgorithmSHA512, algorithm_name)) {
+             algorithm = SEC_OID_SHA512;
+         } else {
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         }
+     }
+     
+diff --git a/OSX/sec/Security/SecCertificate.c b/OSX/sec/Security/SecCertificate.c
+index 8735a045..042026f2 100644
+--- a/OSX/sec/Security/SecCertificate.c
++++ b/OSX/sec/Security/SecCertificate.c
+@@ -31,6 +31,7 @@
+ #undef __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__
+ #endif
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecCertificateInternal.h>
+ #include <utilities/SecIOFormat.h>
+ #include <CommonCrypto/CommonDigest.h>
+@@ -1847,7 +1848,7 @@ OSStatus SecCertificateSetKeychainItem(SecCertificateRef certificate,
+ 	CFTypeRef keychain_item)
+ {
+ 	if (!certificate) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFRetainSafe(keychain_item);
+ 	CFReleaseSafe(certificate->_keychain_item);
+@@ -4871,7 +4872,7 @@ CFArrayRef SecCertificateCopyRFC822Names(SecCertificateRef certificate) {
+ 
+ OSStatus SecCertificateCopyEmailAddresses(SecCertificateRef certificate, CFArrayRef * __nonnull CF_RETURNS_RETAINED emailAddresses) {
+     if (!certificate || !emailAddresses) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     *emailAddresses = SecCertificateCopyRFC822Names(certificate);
+     if (*emailAddresses == NULL) {
+@@ -4924,7 +4925,7 @@ CFArrayRef SecCertificateCopyCommonNames(SecCertificateRef certificate) {
+ OSStatus SecCertificateCopyCommonName(SecCertificateRef certificate, CFStringRef *commonName)
+ {
+     if (!certificate) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     CFArrayRef commonNames = SecCertificateCopyCommonNames(certificate);
+     if (!commonNames) {
+@@ -5766,7 +5767,7 @@ OSStatus SecCertificateIsSelfSigned(SecCertificateRef certificate, Boolean *isSe
+         return errSecInvalidCertificate;
+     }
+     if (!isSelfSigned) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     *isSelfSigned = _SecCertificateIsSelfSigned(certificate);
+     return errSecSuccess;
+diff --git a/OSX/sec/Security/SecItem.c b/OSX/sec/Security/SecItem.c
+index e79ee0c5..c70be71d 100644
+--- a/OSX/sec/Security/SecItem.c
++++ b/OSX/sec/Security/SecItem.c
+@@ -27,6 +27,7 @@
+     passwords.)
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecBasePriv.h>
+ #include <Security/SecItem.h>
+ #include <Security/SecItemPriv.h>
+@@ -158,7 +159,7 @@ static OSStatus osstatus_for_kern_return(CFIndex kernResult)
+         case kIOReturnError:
+             return errSecDecode;
+         case kIOReturnBadArgument:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         default:
+             return errSecNotAvailable; /* TODO: Replace with a real error code. */
+ 	}
+@@ -171,7 +172,7 @@ static OSStatus osstatus_for_xpc_error(CFIndex xpcError) {
+             return errSecSuccess;
+         case kSecXPCErrorUnexpectedType:
+         case kSecXPCErrorUnexpectedNull:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         case kSecXPCErrorConnectionFailed:
+             return errSecNotAvailable;
+         case kSecXPCErrorUnknown:
+@@ -188,7 +189,7 @@ static OSStatus osstatus_for_der_error(CFIndex derError) {
+         case kSecDERErrorUnsupportedNumberType:
+             return errSecDecode;
+         case kSecDERErrorUnsupportedCFObject:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         case kSecDERErrorAllocationFailure:
+             return errSecAllocate;
+         default:
+@@ -202,7 +203,7 @@ static OSStatus osstatus_for_localauthentication_error(CFIndex laError) {
+         case kLAErrorUserCancel:
+             return errSecUserCanceled;
+         case kLAErrorParameter:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         case kLAErrorNotInteractive:
+             return errSecInteractionNotAllowed;
+         default:
+@@ -213,7 +214,7 @@ static OSStatus osstatus_for_localauthentication_error(CFIndex laError) {
+ static OSStatus osstatus_for_ctk_error(CFIndex ctkError) {
+     switch (ctkError) {
+         case kTKErrorCodeBadParameter:
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         case kTKErrorCodeNotImplemented:
+             return errSecUnimplemented;
+         case kTKErrorCodeCanceledByUser:
+diff --git a/OSX/sec/Security/SecKey.m b/OSX/sec/Security/SecKey.m
+index 723a8bb7..d72aafc2 100644
+--- a/OSX/sec/Security/SecKey.m
++++ b/OSX/sec/Security/SecKey.m
+@@ -24,6 +24,7 @@
+ /*
+  * SecKey.m - CoreFoundation based key object
+  */
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <AssertMacros.h>
+ #include <Security/SecBase.h>
+ 
+@@ -811,7 +812,7 @@ OSStatus SecKeyRawSign(
+                        size_t              *sigLen) {		/* IN/OUT */
+     SecKeyAlgorithm algorithm = SecKeyGetSignatureAlgorithmForPadding(key, padding, dataToSignLen);
+     if (algorithm == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     return SecKeyPerformLegacyOperation(key, dataToSign, dataToSignLen, NULL, 0, sig, sigLen,
+                                         ^CFTypeRef(CFDataRef in1, CFDataRef in2, CFRange *range, CFErrorRef *error) {
+@@ -829,7 +830,7 @@ OSStatus SecKeyRawSign_macOS(
+                        size_t              *sigLen) {        /* IN/OUT */
+     SecKeyAlgorithm algorithm = SecKeyGetSignatureAlgorithmForPadding_macOS(key, padding, dataToSignLen);
+     if (algorithm == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     return SecKeyPerformLegacyOperation(key, dataToSign, dataToSignLen, NULL, 0, sig, sigLen,
+                                         ^CFTypeRef(CFDataRef in1, CFDataRef in2, CFRange *range, CFErrorRef *error) {
+@@ -848,7 +849,7 @@ OSStatus SecKeyRawVerify(
+                          size_t              sigLen) {		/* length of signature */
+     SecKeyAlgorithm algorithm = SecKeyGetSignatureAlgorithmForPadding(key, padding, signedDataLen);
+     if (algorithm == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     OSStatus status = SecKeyPerformLegacyOperation(key, signedData, signedDataLen, sig, sigLen, NULL, NULL,
+                                                    ^CFTypeRef(CFDataRef in1, CFDataRef in2, CFRange *range, CFErrorRef *error) {
+@@ -868,7 +869,7 @@ OSStatus SecKeyRawVerify_macOS(
+                          size_t              sigLen) {        /* length of signature */
+     SecKeyAlgorithm algorithm = SecKeyGetSignatureAlgorithmForPadding_macOS(key, padding, signedDataLen);
+     if (algorithm == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     OSStatus status = SecKeyPerformLegacyOperation(key, signedData, signedDataLen, sig, sigLen, NULL, NULL,
+                                                    ^CFTypeRef(CFDataRef in1, CFDataRef in2, CFRange *range, CFErrorRef *error) {
+@@ -906,7 +907,7 @@ OSStatus SecKeyEncrypt(
+                        size_t              *cipherTextLen) {	/* IN/OUT */
+     SecKeyAlgorithm algorithm = SecKeyGetEncryptionAlgorithmForPadding(key, padding);
+     if (algorithm == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     return SecKeyPerformLegacyOperation(key, plainText, plainTextLen, NULL, 0, cipherText, cipherTextLen,
+@@ -924,7 +925,7 @@ OSStatus SecKeyDecrypt(
+                        size_t              *plainTextLen) {	/* IN/OUT */
+     SecKeyAlgorithm algorithm = SecKeyGetEncryptionAlgorithmForPadding(key, padding);
+     if (algorithm == NULL) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     return SecKeyPerformLegacyOperation(key, cipherText, cipherTextLen, NULL, 0, plainText, plainTextLen,
+                                         ^CFTypeRef(CFDataRef in1, CFDataRef in2, CFRange *range, CFErrorRef *error) {
+@@ -1228,11 +1229,11 @@ OSStatus SecKeyCopyPersistentRef(SecKeyRef key, CFDataRef* persistentRef)
+ {
+     if (!key) {
+         secerror("SecKeyCopyPersistentRef: Need a key reference for this to work");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     if (!persistentRef) {
+         secerror("SecKeyCopyPersistentRef: Need a persistentRef pointer for this to work");
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }    
+ 
+     CFDictionaryRef query = CFDictionaryCreateForCFTypes(kCFAllocatorDefault,
+diff --git a/OSX/sec/Security/SecOTRFullIdentity.c b/OSX/sec/Security/SecOTRFullIdentity.c
+index c38b51ca..c0bb67a6 100644
+--- a/OSX/sec/Security/SecOTRFullIdentity.c
++++ b/OSX/sec/Security/SecOTRFullIdentity.c
+@@ -22,6 +22,7 @@
+  */
+ 
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecOTR.h"
+ #include "SecOTRIdentityPriv.h"
+ #include <utilities/array_size.h>
+@@ -508,7 +509,7 @@ static OSStatus SecOTRFIAppendV3Serialization(SecOTRFullIdentityRef fullID, CFMu
+ fail:
+     CFDataSetLength(serializeInto, start);
+ 
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ static OSStatus SecOTRFIAppendV2Serialization(SecOTRFullIdentityRef fullID, CFMutableDataRef serializeInto)
+@@ -524,7 +525,7 @@ static OSStatus SecOTRFIAppendV2Serialization(SecOTRFullIdentityRef fullID, CFMu
+ fail:
+     CFDataSetLength(serializeInto, start);
+ 
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ 
+diff --git a/OSX/sec/Security/SecOTRPacketData.h b/OSX/sec/Security/SecOTRPacketData.h
+index fc84f8c4..24f45b77 100644
+--- a/OSX/sec/Security/SecOTRPacketData.h
++++ b/OSX/sec/Security/SecOTRPacketData.h
+@@ -25,6 +25,7 @@
+ #ifndef _SECOTRPACKETDATA_H_
+ #define _SECOTRPACKETDATA_H_
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <CoreFoundation/CFBase.h>
+ #include <CoreFoundation/CFRuntime.h>
+ #include <CoreFoundation/CFData.h>
+@@ -147,7 +148,7 @@ static inline OSStatus ReadLongLong(const uint8_t *_Nonnull *_Nonnull bytesPtr,
+ 
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ static inline OSStatus ReadLongLongCompact(const uint8_t *_Nonnull *_Nonnull bytesPtr, size_t*sizePtr, uint64_t* value)
+@@ -193,7 +194,7 @@ static inline OSStatus ReadLong(const uint8_t *_Nonnull *_Nonnull bytesPtr, size
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+     
+ static inline OSStatus ReadShort(const uint8_t *_Nonnull *_Nonnull bytesPtr, size_t*sizePtr, uint16_t* value)
+@@ -211,7 +212,7 @@ static inline OSStatus ReadShort(const uint8_t *_Nonnull *_Nonnull bytesPtr, siz
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ static inline OSStatus ReadByte(const uint8_t *_Nonnull *_Nonnull bytesPtr, size_t*sizePtr, uint8_t* value)
+@@ -228,7 +229,7 @@ static inline OSStatus ReadByte(const uint8_t *_Nonnull *_Nonnull bytesPtr, size
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ static inline OSStatus ReadByteAsBool(const uint8_t *_Nonnull *_Nonnull bytesPtr, size_t*sizePtr, bool* value)
+@@ -276,7 +277,7 @@ static inline OSStatus ReadMPI(const uint8_t *_Nonnull *_Nonnull bytesPtr, size_
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     
+ }
+     
+@@ -301,7 +302,7 @@ static inline OSStatus ReadDATA(const uint8_t *_Nonnull *_Nonnull bytesPtr, size
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     
+ }
+     
+@@ -336,7 +337,7 @@ static inline OSStatus CreatePublicKey(const uint8_t *_Nonnull *_Nonnull bytesPt
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     
+ }
+     
+diff --git a/OSX/sec/Security/SecOTRUtils.c b/OSX/sec/Security/SecOTRUtils.c
+index 56937405..291e29f8 100644
+--- a/OSX/sec/Security/SecOTRUtils.c
++++ b/OSX/sec/Security/SecOTRUtils.c
+@@ -22,6 +22,7 @@
+  */
+ 
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include "SecOTR.h"
+ #include "SecOTRIdentityPriv.h"
+ #include "SecOTRSessionPriv.h"
+@@ -63,7 +64,7 @@ OSStatus insertSize(CFIndex size, uint8_t* here)
+     return errSecSuccess;
+     
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ OSStatus appendSize(CFIndex size, CFMutableDataRef into)
+@@ -76,7 +77,7 @@ OSStatus appendSize(CFIndex size, CFMutableDataRef into)
+     return errSecSuccess;
+     
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ OSStatus readSize(const uint8_t** data, size_t* limit, uint16_t* size)
+@@ -93,7 +94,7 @@ OSStatus readSize(const uint8_t** data, size_t* limit, uint16_t* size)
+     
+     return errSecSuccess;
+ fail:
+-    return errSecParam;
++    do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ }
+ 
+ OSStatus appendSizeAndData(CFDataRef data, CFMutableDataRef appendTo)
+diff --git a/OSX/sec/Security/SecPolicy.c b/OSX/sec/Security/SecPolicy.c
+index b3e95637..85f03c46 100644
+--- a/OSX/sec/Security/SecPolicy.c
++++ b/OSX/sec/Security/SecPolicy.c
+@@ -25,6 +25,7 @@
+  * SecPolicy.c - Implementation of various X.509 certificate trust policies
+  */
+ 
++#include <stdio.h> /* LOL_PARAM instrumentation */
+ #include <Security/SecPolicyInternal.h>
+ #include <Security/SecPolicyPriv.h>
+ #include <AssertMacros.h>
+@@ -507,7 +508,7 @@ OSStatus SecPolicySetProperties(SecPolicyRef policyRef, CFDictionaryRef properti
+ 	// Set policy options based on the provided dictionary keys.
+ 
+ 	if (!(policyRef && properties && (CFDictionaryGetTypeID() == CFGetTypeID(properties)))) {
+-		return errSecParam;
++		do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+ 	}
+ 	CFStringRef oid = (CFStringRef) CFRetain(policyRef->_oid);
+ 	OSStatus result = errSecSuccess;
+@@ -737,7 +738,7 @@ static OSStatus parseOidAndName(CFStringRef oidAndName, CFStringRef *oid, CFStri
+ 
+     CFRange delimiter = CFStringFind(oidAndName, CFSTR("++"), 0);
+     if (delimiter.length != 2) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     /* get first half: oid */
+diff --git a/OSX/sec/Security/SecTrust.c b/OSX/sec/Security/SecTrust.c
+index ee5aea2c..de42343a 100644
+--- a/OSX/sec/Security/SecTrust.c
++++ b/OSX/sec/Security/SecTrust.c
+@@ -160,6 +160,15 @@ static void SecTrustEvaluateIfNecessaryFastAsync(SecTrustRef trust,
+ 												 dispatch_queue_t queue,
+ 												 void (^handler)(OSStatus status));
+ 
++/* LOL_TRUST: temporary instrumentation - remove before commit */
++#include <stdio.h>
++#define LOL_TRUST(...) do { \
++    fprintf(stderr, "LOL_TRUST: "); \
++    fprintf(stderr, __VA_ARGS__); \
++    fprintf(stderr, "\n"); \
++    fflush(stderr); \
++} while (0)
++
+ /* Static functions. */
+ static CFStringRef SecTrustCopyFormatDescription(CFTypeRef cf, CFDictionaryRef formatOptions) {
+     SecTrustRef trust = (SecTrustRef)cf;
+@@ -307,7 +316,7 @@ errOut:
+ 
+ OSStatus SecTrustCopyInputCertificates(SecTrustRef trust, CFArrayRef *certificates) {
+     if (!trust || !certificates) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     __block CFArrayRef certArray = NULL;
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -322,7 +331,7 @@ OSStatus SecTrustCopyInputCertificates(SecTrustRef trust, CFArrayRef *certificat
+ 
+ OSStatus SecTrustAddToInputCertificates(SecTrustRef trust, CFTypeRef certificates) {
+     if (!trust || !certificates) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     __block CFMutableArrayRef newCertificates = NULL;
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -340,14 +349,14 @@ OSStatus SecTrustAddToInputCertificates(SecTrustRef trust, CFTypeRef certificate
+         });
+         if (CFArrayGetCount(newCertificates) != originalCount + CFArrayGetCount(certificates)) {
+             CFReleaseNull(newCertificates);
+-            return errSecParam;
++            do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+         }
+     } else if (CFGetTypeID(certificates) == SecCertificateGetTypeID()) {
+         CFArrayAppendValue(newCertificates, certificates);
+     } else {
+         secerror("BUG IN SECURITY CLIENT: certificates contains unsupported value type");
+         CFReleaseNull(newCertificates);
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+ 
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -370,7 +379,7 @@ void SecTrustSetNeedsEvaluation(SecTrustRef trust) {
+ OSStatus SecTrustSetAnchorCertificatesOnly(SecTrustRef trust,
+     Boolean anchorCertificatesOnly) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -383,7 +392,7 @@ OSStatus SecTrustSetAnchorCertificatesOnly(SecTrustRef trust,
+ OSStatus SecTrustSetAnchorCertificates(SecTrustRef trust,
+     CFArrayRef anchorCertificates) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     __block CFArrayRef anchorsArray = NULL;
+@@ -405,10 +414,10 @@ OSStatus SecTrustSetAnchorCertificates(SecTrustRef trust,
+             }
+             if (count != CFArrayGetCount(anchorsArray)) {
+                 CFReleaseSafe(anchorsArray);
+-                return errSecParam;
++                do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+             }
+         } else {
+-            return errSecParam;
++            do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+         }
+     }
+ 
+@@ -424,7 +433,7 @@ OSStatus SecTrustSetAnchorCertificates(SecTrustRef trust,
+ OSStatus SecTrustCopyCustomAnchorCertificates(SecTrustRef trust,
+     CFArrayRef *anchors) {
+     if (!trust|| !anchors) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     __block CFArrayRef anchorsArray = NULL;
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -463,7 +472,7 @@ Boolean SecTrustFlushResponseCache(CFErrorRef *error) {
+ 
+ OSStatus SecTrustSetOCSPResponse(SecTrustRef trust, CFTypeRef responseData) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     __block CFArrayRef responseArray = NULL;
+@@ -485,14 +494,14 @@ OSStatus SecTrustSetOCSPResponse(SecTrustRef trust, CFTypeRef responseData) {
+             }
+             if (count != CFArrayGetCount(responseArray)) {
+                 CFReleaseSafe(responseArray);
+-                return errSecParam;
++                do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+             }
+         } else if (CFGetTypeID(responseData) == CFDataGetTypeID()) {
+             responseArray = CFArrayCreate(kCFAllocatorDefault, &responseData, 1,
+                                           &kCFTypeArrayCallBacks);
+         } else {
+             secerror("BUG IN SECURITY CLIENT: responseData contains unsupported value type");
+-            return errSecParam;
++            do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+         }
+     }
+ 
+@@ -506,7 +515,7 @@ OSStatus SecTrustSetOCSPResponse(SecTrustRef trust, CFTypeRef responseData) {
+ 
+ OSStatus SecTrustSetSignedCertificateTimestamps(SecTrustRef trust, CFArrayRef sctArray) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -517,7 +526,7 @@ OSStatus SecTrustSetSignedCertificateTimestamps(SecTrustRef trust, CFArrayRef sc
+ 
+ OSStatus SecTrustSetTrustedLogs(SecTrustRef trust, CFArrayRef trustedLogs) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -528,7 +537,7 @@ OSStatus SecTrustSetTrustedLogs(SecTrustRef trust, CFArrayRef trustedLogs) {
+ 
+ OSStatus SecTrustSetVerifyDate(SecTrustRef trust, CFDateRef verifyDate) {
+     if (!trust || !isDate(verifyDate)) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -539,7 +548,7 @@ OSStatus SecTrustSetVerifyDate(SecTrustRef trust, CFDateRef verifyDate) {
+ 
+ OSStatus SecTrustSetPolicies(SecTrustRef trust, CFTypeRef newPolicies) {
+     if (!trust || !newPolicies) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     check(newPolicies);
+@@ -549,7 +558,7 @@ OSStatus SecTrustSetPolicies(SecTrustRef trust, CFTypeRef newPolicies) {
+         CFIndex idx, count = CFArrayGetCount(newPolicies);
+         /* We need at least 1 policy. */
+         if (!(count > 0)) {
+-            return errSecParam;
++            do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+         }
+         policyArray = (CFArrayRef) CFArrayCreateMutable(NULL, count,
+             &kCFTypeArrayCallBacks);
+@@ -566,14 +575,14 @@ OSStatus SecTrustSetPolicies(SecTrustRef trust, CFTypeRef newPolicies) {
+         }
+         if (count != CFArrayGetCount(policyArray)) {
+             CFReleaseSafe(policyArray);
+-            return errSecParam;
++            do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+         }
+     } else if (CFGetTypeID(newPolicies) == SecPolicyGetTypeID()) {
+         policyArray = CFArrayCreate(kCFAllocatorDefault, &newPolicies, 1,
+             &kCFTypeArrayCallBacks);
+     } else {
+         secerror("BUG IN SECURITY CLIENT: newPolicies contains unsupported value type");
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+ 
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -586,7 +595,7 @@ OSStatus SecTrustSetPolicies(SecTrustRef trust, CFTypeRef newPolicies) {
+ 
+ OSStatus SecTrustSetPinningPolicyName(SecTrustRef trust, CFStringRef policyName) {
+     if (!trust || !policyName) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+ 
+     SecTrustSetNeedsEvaluation(trust);
+@@ -603,7 +612,7 @@ OSStatus SecTrustSetPinningPolicyName(SecTrustRef trust, CFStringRef policyName)
+ 
+ OSStatus SecTrustSetKeychainsAllowed(SecTrustRef trust, Boolean allowed) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustSetNeedsEvaluation(trust);
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -615,7 +624,7 @@ OSStatus SecTrustSetKeychainsAllowed(SecTrustRef trust, Boolean allowed) {
+ 
+ OSStatus SecTrustGetKeychainsAllowed(SecTrustRef trust, Boolean *allowed) {
+     if (!trust || !allowed) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     *allowed = trust->_keychainsAllowed;
+ 
+@@ -624,7 +633,7 @@ OSStatus SecTrustGetKeychainsAllowed(SecTrustRef trust, Boolean *allowed) {
+ 
+ OSStatus SecTrustCopyPolicies(SecTrustRef trust, CFArrayRef *policies) {
+ 	if (!trust|| !policies) {
+-		return errSecParam;
++		do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+ 	}
+     __block CFArrayRef policyArray = NULL;
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -698,7 +707,7 @@ static CF_RETURNS_RETAINED CFArrayRef SecTrustCopyOptionsFromPolicies(CFArrayRef
+  */
+ OSStatus SecTrustSetNetworkFetchAllowed(SecTrustRef trust, Boolean allowFetch) {
+ 	if (!trust) {
+-		return errSecParam;
++		do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+ 	}
+     __block OSStatus status = errSecSuccess;
+     __block bool oldAllowFetch = true;
+@@ -725,7 +734,7 @@ OSStatus SecTrustSetNetworkFetchAllowed(SecTrustRef trust, Boolean allowFetch) {
+ 
+ OSStatus SecTrustGetNetworkFetchAllowed(SecTrustRef trust, Boolean *allowFetch) {
+ 	if (!trust || !allowFetch) {
+-		return errSecParam;
++		do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+ 	}
+     __block CFArrayRef foundValues = NULL;
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -780,7 +789,7 @@ CFArrayRef SecTrustGetDetails(SecTrustRef trust) {
+ OSStatus SecTrustGetTrustResult(SecTrustRef trust,
+     SecTrustResultType *result) {
+     if (!trust || !result) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     SecTrustEvaluateIfNecessary(trust);
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -1002,7 +1011,7 @@ static OSStatus SecTrustEvaluateInternal(SecTrustRef trust, SecTrustResultType *
+         *result = kSecTrustResultInvalid;
+     }
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     OSStatus status = SecTrustEvaluateIfNecessary(trust);
+     if (status) {
+@@ -1064,7 +1073,7 @@ static OSStatus SecTrustCopyErrorStrings(SecTrustRef trust,
+                                      CFStringRef * CF_RETURNS_RETAINED simpleError,
+                                      CFStringRef * CF_RETURNS_RETAINED fullError) {
+     if (!simpleError || !fullError) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     __block CFArrayRef details = NULL;
+     dispatch_sync(trust->_trustQueue, ^{
+@@ -1238,6 +1247,7 @@ static CF_RETURNS_RETAINED CFErrorRef SecTrustCopyError(SecTrustRef trust) {
+ bool SecTrustEvaluateWithError(SecTrustRef trust, CFErrorRef *error) {
+     SecTrustResultType trustResult = kSecTrustResultInvalid;
+     OSStatus status = SecTrustEvaluateInternal(trust, &trustResult);
++    LOL_TRUST("EvaluateWithError: internal status=%d trustResult=%d", (int)status, (int)trustResult);
+     if (status == errSecSuccess && (trustResult == kSecTrustResultProceed || trustResult == kSecTrustResultUnspecified)) {
+         if (error) {
+             *error = NULL;
+@@ -1274,7 +1284,7 @@ OSStatus SecTrustEvaluateFastAsync(SecTrustRef trust,
+ 	dispatch_queue_t queue, SecTrustCallback result)
+ {
+ 	if (trust == NULL || queue == NULL || result == NULL) {
+-		return errSecParam;
++		do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+ 	}
+ 
+ 	dispatch_assert_queue(queue);
+@@ -1298,7 +1308,7 @@ OSStatus SecTrustEvaluateFastAsync(SecTrustRef trust,
+ OSStatus SecTrustEvaluateAsyncWithError(SecTrustRef trust, dispatch_queue_t queue, SecTrustWithErrorCallback callback)
+ {
+     if (trust == NULL || queue == NULL || callback == NULL) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+ 
+     dispatch_assert_queue(queue);
+@@ -1477,15 +1487,21 @@ static SecTrustResultType handle_trust_evaluate_xpc(enum SecXPCOperation op, CFA
+ {
+     __block SecTrustResultType tr = kSecTrustResultInvalid;
+     securityd_send_sync_and_do(op, error, ^bool(xpc_object_t message, CFErrorRef *blockError) {
+-        if (!SecXPCDictionarySetCertificates(message, kSecTrustCertificatesKey, certificates, blockError))
++        if (!SecXPCDictionarySetCertificates(message, kSecTrustCertificatesKey, certificates, blockError)) {
++            LOL_TRUST("xpc req: set certificates FAILED err=%ld", (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
+             return false;
+-        if (anchors && !SecXPCDictionarySetCertificates(message, kSecTrustAnchorsKey, anchors, blockError))
++        }
++        if (anchors && !SecXPCDictionarySetCertificates(message, kSecTrustAnchorsKey, anchors, blockError)) {
++            LOL_TRUST("xpc req: set anchors FAILED err=%ld", (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
+             return false;
++        }
+         if (anchorsOnly)
+             xpc_dictionary_set_bool(message, kSecTrustAnchorsOnlyKey, anchorsOnly);
+         xpc_dictionary_set_bool(message, kSecTrustKeychainsAllowedKey, keychainsAllowed);
+-        if (!SecXPCDictionarySetPolicies(message, kSecTrustPoliciesKey, policies, blockError))
++        if (!SecXPCDictionarySetPolicies(message, kSecTrustPoliciesKey, policies, blockError)) {
++            LOL_TRUST("xpc req: set policies FAILED err=%ld", (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
+             return false;
++        }
+         if (responses && !SecXPCDictionarySetDataArray(message, kSecTrustResponsesKey, responses, blockError))
+             return false;
+         if (SCTs && !SecXPCDictionarySetDataArray(message, kSecTrustSCTsKey, SCTs, blockError))
+@@ -1498,11 +1514,43 @@ static SecTrustResultType handle_trust_evaluate_xpc(enum SecXPCOperation op, CFA
+         return true;
+     }, ^bool(xpc_object_t response, CFErrorRef *blockError) {
+         secdebug("trust", "response: %@", response);
+-        return SecXPCDictionaryCopyArrayOptional(response, kSecTrustDetailsKey, details, blockError) &&
+-        SecXPCDictionaryCopyDictionaryOptional(response, kSecTrustInfoKey, info, blockError) &&
+-        SecXPCDictionaryCopyChainOptional(response, kSecTrustChainKey, chain, blockError) &&
+-        ((tr = SecXPCDictionaryGetNonZeroInteger(response, kSecTrustResultKey, blockError)) != kSecTrustResultInvalid);
++        bool a = SecXPCDictionaryCopyArrayOptional(response, kSecTrustDetailsKey, details, blockError);
++        LOL_TRUST("xpc resp: details ok=%d err=%ld", (int)a, (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
++        if (!a) return false;
++        bool b = SecXPCDictionaryCopyDictionaryOptional(response, kSecTrustInfoKey, info, blockError);
++        LOL_TRUST("xpc resp: info ok=%d err=%ld", (int)b, (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
++        if (!b) return false;
++        bool c = SecXPCDictionaryCopyChainOptional(response, kSecTrustChainKey, chain, blockError);
++        LOL_TRUST("xpc resp: chain ok=%d err=%ld", (int)c, (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
++        if (!c) return false;
++        tr = SecXPCDictionaryGetNonZeroInteger(response, kSecTrustResultKey, blockError);
++        LOL_TRUST("xpc resp: trustResult=%d err=%ld", (int)tr, (blockError && *blockError) ? (long)CFErrorGetCode(*blockError) : 0L);
++        /* LOL_TRUST: temporary instrumentation - remove before commit.  When the
++           evaluation does not come back trusted, the per-certificate details say
++           which check it was, which is the only way to tell a missing anchor
++           apart from an expiry or a revocation answer. */
++        if (tr != kSecTrustResultUnspecified && tr != kSecTrustResultProceed) {
++            char lolbuf[8192];
++            if (details && *details) {
++                CFStringRef lold = CFCopyDescription(*details);
++                if (lold) {
++                    if (CFStringGetCString(lold, lolbuf, sizeof(lolbuf), kCFStringEncodingUTF8))
++                        LOL_TRUST("FAILDETAIL details=%s", lolbuf);
++                    CFRelease(lold);
++                }
++            }
++            if (info && *info) {
++                CFStringRef loli = CFCopyDescription(*info);
++                if (loli) {
++                    if (CFStringGetCString(loli, lolbuf, sizeof(lolbuf), kCFStringEncodingUTF8))
++                        LOL_TRUST("FAILDETAIL info=%s", lolbuf);
++                    CFRelease(loli);
++                }
++            }
++        }
++        return tr != kSecTrustResultInvalid;
+     });
++    LOL_TRUST("handle_trust_evaluate_xpc -> tr=%d outerErr=%ld", (int)tr, (error && *error) ? (long)CFErrorGetCode(*error) : 0L);
+     return tr;
+ }
+ 
+@@ -1561,17 +1609,20 @@ OSStatus validate_array_of_items(CFArrayRef array, CFStringRef arrayItemType, CF
+ 	count = (array) ? CFArrayGetCount(array) : 0;
+ 	if (!count && required) {
+ 		secerror("no %@ in array!", arrayItemType);
++		LOL_TRUST("errSecParam %s:%d", __func__, __LINE__);
+ 		result = errSecParam;
+ 	}
+ 	for (index = 0; index < count; index++) {
+ 		CFTypeRef item = (CFTypeRef) CFArrayGetValueAtIndex(array, index);
+ 		if (!item) {
+ 			secerror("%@ %@ (index %d)", arrayItemType, CFSTR("reference is nil"), (int)index);
++			LOL_TRUST("errSecParam %s:%d", __func__, __LINE__);
+ 			result = errSecParam;
+ 			continue;
+ 		}
+ 		if (CFGetTypeID(item) != itemTypeID) {
+ 			secerror("%@ %@ (index %d)", arrayItemType, CFSTR("is not the expected CF type"), (int)index);
++			LOL_TRUST("errSecParam %s:%d", __func__, __LINE__);
+ 			result = errSecParam;
+ 		}
+ 		// certificates
+@@ -1581,10 +1632,12 @@ OSStatus validate_array_of_items(CFArrayRef array, CFStringRef arrayItemType, CF
+ 			const UInt8 *bytes = SecCertificateGetBytePtr(certificate);
+ 			if (!length) {
+ 				secerror("%@ %@ (index %d)", arrayItemType, CFSTR("has zero length"), (int)index);
++				LOL_TRUST("errSecParam %s:%d", __func__, __LINE__);
+ 				result = errSecParam;
+ 			}
+ 			if (!bytes) {
+ 				secerror("%@ %@ (index %d)", arrayItemType, CFSTR("has nil bytes"), (int)index);
++				LOL_TRUST("errSecParam %s:%d", __func__, __LINE__);
+ 				result = errSecParam;
+ 			}
+ 		#if SECTRUST_VERBOSE_DEBUG
+@@ -1642,7 +1695,7 @@ static OSStatus SecTrustEvaluateIfNecessary(SecTrustRef trust) {
+     __block OSStatus result;
+     check(trust);
+     if (!trust)
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+ 
+     __block CFAbsoluteTime verifyTime = SecTrustGetVerifyTime(trust);
+     SecTrustAddPolicyAnchors(trust);
+@@ -1694,8 +1747,13 @@ static OSStatus SecTrustEvaluateIfNecessary(SecTrustRef trust) {
+                         CFReleaseNull(*error);
+                     return true;
+                 }
++                LOL_TRUST("IfNecessary: xpc done trustResult=%d err=%ld (%s)",
++                          (int)trust->_trustResult,
++                          (error && *error) ? (long)CFErrorGetCode(*error) : 0L,
++                          (error && *error) ? "haveError" : "noError");
+                 return trust->_trustResult != kSecTrustResultInvalid;
+             });
++            LOL_TRUST("IfNecessary: SecOSStatusWith -> %d", (int)result);
+         });
+     });
+     return result;
+@@ -2669,7 +2727,7 @@ bool SecTrustReportNetworkingAnalytics(const char *eventNameString, xpc_object_t
+  */
+ OSStatus SecTrustEvaluateLeafOnly(SecTrustRef trust, SecTrustResultType *result) {
+     if (!trust) {
+-        return errSecParam;
++        do { LOL_TRUST("errSecParam %s:%d", __func__, __LINE__); return errSecParam; } while (0);
+     }
+     OSStatus status = errSecSuccess;
+     SecTrustResultType trustResult = kSecTrustResultInvalid;
+@@ -2922,6 +2980,7 @@ static OSStatus SecTrustCreateFromPlist(CFPropertyListRef plist, SecTrustRef CF_
+         (trustResult >= 0)) {
+         output->_trustResult = trustResult;
+     } else {
++        LOL_TRUST("errSecParam %s:%d", __func__, __LINE__);
+         status = errSecParam;
+     }
+     if (CFDictionaryGetValue(plist, CFSTR(kSecTrustAnchorsOnlyKey)) == kCFBooleanTrue) {
+diff --git a/OSX/sec/Security/SecTrustStore.c b/OSX/sec/Security/SecTrustStore.c
+index 79449ccc..67b4458b 100644
+--- a/OSX/sec/Security/SecTrustStore.c
++++ b/OSX/sec/Security/SecTrustStore.c
+@@ -140,14 +140,14 @@ static OSStatus validateConstraint(Boolean isSelfSigned, CFMutableDictionaryRef
+     uint32_t resultValue = kSecTrustSettingsResultInvalid;
+     if (!isNumber(resultNumber) && !isSelfSigned) {
+         /* only self-signed certs get default of TrustAsRoot */
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+     if (isNumber(resultNumber) && CFNumberGetValue(resultNumber, kCFNumberSInt32Type, &resultValue)) {
+         if (isSelfSigned && resultValue == kSecTrustSettingsResultTrustAsRoot) {
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         }
+         if (!isSelfSigned && resultValue == kSecTrustSettingsResultTrustRoot) {
+-            return errSecParam;
++            do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+         }
+     }
+ 
+@@ -175,7 +175,7 @@ static OSStatus validateTrustSettings(Boolean isSelfSigned,
+     if (!trustSettingsDictOrArray && isSelfSigned) {
+         return errSecSuccess;
+     } else if (!trustSettingsDictOrArray && !isSelfSigned) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     if (CFDictionaryGetTypeID() == CFGetTypeID(trustSettingsDictOrArray)) {
+@@ -244,7 +244,7 @@ errOut:
+ OSStatus SecTrustStoreGetSettingsVersionNumber(SecTrustSettingsVersionNumber* p_settings_version_number)
+ {
+     if (NULL == p_settings_version_number) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     OSStatus status = errSecSuccess;
+@@ -262,7 +262,7 @@ OSStatus SecTrustStoreGetSettingsVersionNumber(SecTrustSettingsVersionNumber* p_
+ OSStatus SecTrustStoreGetSettingsAssetVersionNumber(SecTrustSettingsAssetVersionNumber* p_settings_asset_version_number)
+ {
+     if (NULL == p_settings_asset_version_number) {
+-        return errSecParam;
++        do { fprintf(stderr, "LOL_PARAM: %s %s:%d\n", __FILE__, __func__, __LINE__); fflush(stderr); return errSecParam; } while (0);
+     }
+ 
+     OSStatus status = errSecSuccess;
+diff --git a/OSX/sec/ipc/client.c b/OSX/sec/ipc/client.c
+index 4ff36ed9..60249424 100644
+--- a/OSX/sec/ipc/client.c
++++ b/OSX/sec/ipc/client.c
+@@ -517,24 +517,52 @@ bool securityd_message_no_error(xpc_object_t message, CFErrorRef *error) {
+     return false;
+ }
+ 
++/* LOL_IPC: temporary instrumentation - remove before commit */
++#include <stdio.h>
++#include <sys/time.h>
++#include <unistd.h>
++static double lol_now(void) {
++    struct timeval tv; gettimeofday(&tv, NULL);
++    return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
++}
++#define LOL_IPC(...) do { \
++    fprintf(stderr, "LOL_IPC[%d]: ", (int)getpid()); \
++    fprintf(stderr, __VA_ARGS__); \
++    fprintf(stderr, "\n"); fflush(stderr); \
++} while (0)
++
+ bool securityd_send_sync_and_do(enum SecXPCOperation op, CFErrorRef *error,
+                                 bool (^add_to_message)(xpc_object_t message, CFErrorRef* error),
+                                 bool (^handle_response)(xpc_object_t _Nonnull response, CFErrorRef* error)) {
+     xpc_object_t message = securityd_create_message(op, error);
+     bool ok = false;
++    double lol_t0 = lol_now();
++    LOL_IPC("op=%d (%s) start", (int)op, is_trust_operation(op) ? "trustd" : "secd");
+     if (message) {
+         if (!add_to_message || add_to_message(message, error)) {
+             xpc_object_t response = securityd_message_with_reply_sync(message, error);
++            LOL_IPC("op=%d reply=%p after %.3fs err=%ld", (int)op, (void *)response,
++                    lol_now() - lol_t0,
++                    (error && *error) ? (long)CFErrorGetCode(*error) : 0L);
+             if (response) {
+                 if (securityd_message_no_error(response, error)) {
+                     ok = (!handle_response || handle_response(response, error));
++                    LOL_IPC("op=%d handle_response ok=%d err=%ld", (int)op, (int)ok,
++                            (error && *error) ? (long)CFErrorGetCode(*error) : 0L);
++                } else {
++                    LOL_IPC("op=%d message carried error err=%ld", (int)op,
++                            (error && *error) ? (long)CFErrorGetCode(*error) : 0L);
+                 }
+                 xpc_release(response);
+             }
++        } else {
++            LOL_IPC("op=%d add_to_message FAILED err=%ld", (int)op,
++                    (error && *error) ? (long)CFErrorGetCode(*error) : 0L);
+         }
+         xpc_release(message);
+     }
+ 
++    LOL_IPC("op=%d done ok=%d total=%.3fs", (int)op, (int)ok, lol_now() - lol_t0);
+     return ok;
+ }
+ 
+diff --git a/keychain/securityd/CMakeLists.txt b/keychain/securityd/CMakeLists.txt
+index 4bdd5a5d..42fcdab6 100644
+--- a/keychain/securityd/CMakeLists.txt
++++ b/keychain/securityd/CMakeLists.txt
+@@ -68,3 +68,6 @@ target_link_libraries(secd
+ )
+ install(TARGETS secd DESTINATION libexec/darling/usr/libexec)
+ install(FILES ../../OSX/sec/ipc/com.apple.secd.plist DESTINATION libexec/darling/System/Library/LaunchAgents)
++# Darling's launchd never loads LaunchAgents, so install the job as a daemon too;
++# without it nothing registers com.apple.securityd.xpc. See the plist for details.
++install(FILES com.apple.secd.daemon.plist DESTINATION libexec/darling/System/Library/LaunchDaemons RENAME com.apple.secd.plist)
+diff --git a/keychain/securityd/com.apple.secd.daemon.plist b/keychain/securityd/com.apple.secd.daemon.plist
+new file mode 100644
+index 00000000..1d697268
+--- /dev/null
++++ b/keychain/securityd/com.apple.secd.daemon.plist
+@@ -0,0 +1,83 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<!--
++	Darling runs a single launchd with no per-user session, so nothing ever loads
++	/System/Library/LaunchAgents. secd is an agent on macOS, but without it no one
++	registers com.apple.securityd.xpc and every Security framework client that
++	talks to securityd blocks forever waiting for a reply from a service that was
++	never looked up. This is the same job, installed as a daemon so launchd knows
++	about its Mach services and can start it on demand.
++-->
++<plist version="1.0">
++<dict>
++	<key>EnablePressuredExit</key>
++	<true/>
++	<key>EnableTransactions</key>
++	<true/>
++	<key>POSIXSpawnType</key>
++	<string>Interactive</string>
++	<key>Label</key>
++	<string>com.apple.secd</string>
++	<key>MachServices</key>
++	<dict>
++		<key>com.apple.security.octagon</key>
++		<true/>
++		<key>com.apple.secd</key>
++		<true/>
++		<key>com.apple.securityd.xpc</key>
++		<true/>
++		<key>com.apple.securityd.aps</key>
++		<true/>
++		<key>com.apple.securityd.ckks</key>
++		<true/>
++		<key>com.apple.securityd.general</key>
++		<true/>
++		<key>com.apple.securityd.sos</key>
++		<true/>
++		<key>com.apple.security.escrow-update</key>
++		<true/>
++	</dict>
++	<key>ProgramArguments</key>
++	<array>
++		<string>/usr/libexec/secd</string>
++	</array>
++	<key>Umask</key>
++	<integer>54</integer>
++	<key>EnvironmentVariables</key>
++	<dict>
++		<key>DEBUGSCOPE</key>
++		<string>-policy-node,policy-set,policy,alloc,trust,bind,profile,trace,dbconn,OTR,serverxpc,sqlite3,error_thee_well,ringSigning</string>
++		<key>WAIT4DEBUGGER</key>
++		<string>NO</string>
++	</dict>
++	<key>LaunchEvents</key>
++	<dict>
++		<key>com.apple.xpc.activity</key>
++		<dict>
++			<key>com.apple.securityd.daily</key>
++			<dict>
++				<key>Priority</key>
++				<string>Utility</string>
++				<key>Interval</key>
++				<real>86400</real>
++			</dict>
++			<key>com.apple.securityd.entropyhealth</key>
++			<dict>
++				<key>Priority</key>
++				<string>Utility</string>
++				<key>Interval</key>
++				<real>86400</real>
++			</dict>
++			<key>com.apple.securityd.prng</key>
++			<dict>
++				<key>Priority</key>
++				<string>Maintenance</string>
++				<key>Interval</key>
++				<real>3600</real>
++                <key>RequiresClassC</key>
++                <false/>
++			</dict>
++		</dict>
++	</dict>
++</dict>
++</plist>
+diff --git a/securityd/src/transition.cpp b/securityd/src/transition.cpp
+index 8d0110f0..1a356ad1 100644
+--- a/securityd/src/transition.cpp
++++ b/securityd/src/transition.cpp
+@@ -238,16 +238,26 @@ static void checkPathLength(char const *str) {
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wmissing-prototypes"
+ 
++/* LOL_SD: temporary instrumentation - remove before commit */
++extern "C" void lol_err_bt(const char *tag, int code);
++extern "C" FILE *lol_err_file(void);
++#define LOL_SD(...) do { FILE *f = lol_err_file(); fprintf(f, "LOL_SD[%d]: ", (int)getpid()); \
++	fprintf(f, __VA_ARGS__); fprintf(f, "\n"); fflush(f); } while (0)
++
+ kern_return_t ucsp_server_setup(UCSP_ARGS, mach_port_t taskToken, ClientSetupInfo info, const char *identity)
+ {
+ 	mach_port_t taskPort = MACH_PORT_NULL;
++	LOL_SD("setup: entry taskToken=%d replyPort=%d", (int)taskToken, (int)replyPort);
+ 	BEGIN_IPCN
+     secinfo("SecServer", "request entry: setup");
+ 	kern_return_t kr = task_identity_token_get_task_port(taskToken, TASK_FLAVOR_CONTROL, &taskPort);
++	LOL_SD("setup: task_identity_token_get_task_port kr=0x%x taskPort=%d", (unsigned)kr, (int)taskPort);
+ 	MachPlusPlus::check(kr);
+ 	Server::active().setupConnection(Server::connectNewProcess, replyPort,
+ 		taskPort, auditToken, &info);
++	LOL_SD("setup: setupConnection returned");
+ 	END_IPCN(CSSM)
++	LOL_SD("setup: rcode=%d", (int)*rcode);
+ 	if (*rcode)
+ 		Syslog::notice("setup(%s) failed rcode=%d", identity ? identity : "<NULL>", *rcode);
+ 	mach_port_deallocate(mach_task_self(), taskPort);
+diff --git a/trust/trustd/trustdFileLocations.m b/trust/trustd/trustdFileLocations.m
+index 4f334379..3c95b7dc 100644
+--- a/trust/trustd/trustdFileLocations.m
++++ b/trust/trustd/trustdFileLocations.m
+@@ -244,6 +244,18 @@ static NSXPCConnection* getConnection()
+ 
+ void FixTrustdFilePermissions(void)
+ {
++#ifdef DARLING
++    /*
++     * There is no trustdFileHelper in a Darling prefix, and there is nothing for
++     * it to do if there were: the prefix knows only root and the single user who
++     * owns it, so trustd runs as that user and already owns every file it uses.
++     * needToFixFilePermissions() would still say yes, because it only accepts
++     * TRUSTD_ROLE_ACCOUNT as the owner, and we would then block forever on a
++     * synchronous XPC call to a Mach service that nobody provides.
++     */
++    secdebug("helper", "no trustdFileHelper in a Darling prefix; trustd owns its own files");
++    return;
++#endif
+ #if TARGET_OS_OSX
+     const NSString *processName = @"trustdFileHelper";
+ #else

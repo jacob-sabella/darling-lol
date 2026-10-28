@@ -1,0 +1,243 @@
+diff --git a/internal-include/xpc/objects/pipe.h b/internal-include/xpc/objects/pipe.h
+index 619476c..f5d70f2 100644
+--- a/internal-include/xpc/objects/pipe.h
++++ b/internal-include/xpc/objects/pipe.h
+@@ -57,7 +57,15 @@ struct xpc_pipe_s {
+  */
+ @property(assign) BOOL broken;
+ 
++/**
++ * On success, the object stored into @p incomingMessage is owned by the caller
++ * and must be released by it.
++ */
+ + (int)receiveWithPort: (mach_port_t)port incomingMessage: (xpc_object_t*)incomingMessage flags: (uint64_t)flags;
++/**
++ * On success, the object stored into @p incomingMessage is owned by the caller
++ * and must be released by it.
++ */
+ + (int)tryReceiveWithPort: (mach_port_t)port incomingMessage: (xpc_object_t*)incomingMessage replyPort: (mach_port_t*)replyPort maximumMIGReplySize: (size_t)maximumMIGReplySize flags:(uint64_t)flags demuxer:(xpc_pipe_mig_demux_f)demuxer;
+ + (int)sendReply: (XPC_CLASS(dictionary)*)message;
+ + (int)demux: (mach_msg_header_t*)request reply: (mach_msg_header_t*)reply demuxer: (xpc_pipe_mig_demux_f)demuxer;
+@@ -65,6 +73,10 @@ struct xpc_pipe_s {
+ - (instancetype)initForService: (const char*)serviceName withFlags: (uint64_t)flags;
+ - (instancetype)initWithPort: (mach_port_t)port flags: (uint64_t)flags;
+ 
++/**
++ * On success, the object stored into @p reply is owned by the caller and must be
++ * released by it.
++ */
+ - (int)sendMessage: (XPC_CLASS(dictionary)*)message withSynchronousReply: (xpc_object_t*)reply flags: (uint64_t)flags;
+ - (int)sendMessage: (XPC_CLASS(dictionary)*)message withReplyPort: (mach_port_t)replyPort;
+ - (int)forwardMessage: (XPC_CLASS(dictionary)*)message;
+diff --git a/src/connection.m b/src/connection.m
+index b7b979a..e147dd1 100644
+--- a/src/connection.m
++++ b/src/connection.m
+@@ -789,6 +789,8 @@ OS_OBJECT_USES_XREF_DISPOSE();
+ 		dispatch_mach_request_no_senders(this->mach_ctx);
+ 	}
+ 
++	fprintf(stderr, "LOL_XPC: activateLocked conn=%p service=%s\n", self, this->service_name ? this->service_name : "<none>");
++	fflush(stderr);
+ 	dispatch_mach_connect(this->mach_ctx, this->recv_port, this->send_port, checkinMessage);
+ 
+ out:
+@@ -990,6 +992,11 @@ error_out:
+ 			xpc_abort("failed to finalize message");
+ 		}
+ 
++		fprintf(stderr, "LOL_XPC: sync send on conn=%p service=%s listener=%d server_peer=%d activated=%d suspension=%jd\n",
++				self, this->service_name ? this->service_name : "<none>",
++				(int)this->is_listener, (int)this->is_server_peer,
++				(int)this->activated, (intmax_t)this->suspension_count);
++		fflush(stderr);
+ 		reply = dispatch_mach_send_with_result_and_wait_for_reply(this->mach_ctx, message, 0, 0, &sendResult, &sendError);
+ 
+ 		handle_send_result(message, sendResult, sendError, true);
+diff --git a/src/event.m b/src/event.m
+index e2d4bd6..5ffc254 100644
+--- a/src/event.m
++++ b/src/event.m
+@@ -20,9 +20,35 @@
+ #import <xpc/xpc.h>
+ #import <xpc/util.h>
+ #import <xpc/launchd_defs.h>
+-#import <dispatch/dispatch.h>
+-#import <stdlib.h>
+-#import <Block.h>
++
++#include <dispatch/dispatch.h>
++#include <Block.h>
++#include <stdlib.h>
++#include <string.h>
++
++// actually, the event publisher is it's own class
++typedef xpc_object_t xpc_event_publisher_t;
++
++// An event publisher is the launchd side of the "launch events" machinery: a
++// daemon creates one, launchd replays every subscription that is already on
++// disk for it as a series of ADD actions and then fires a single INITIAL_BARRIER
++// to say the replay is over.
++//
++// Darling's launchd has no event streams at all, so the replay is always empty -
++// but the barrier still has to arrive. Daemons treat it as "launchd is done
++// talking to me, I may start serving", and notifyd in particular only calls
++// dispatch_mach_connect() on its com.apple.system.notification_center channel
++// from inside that barrier. While these were stubs notifyd held the receive
++// right for that service and never listened on it, so every notify_* client
++// (CoreFoundation, IOKit's power-source notifications, ...) blocked forever in
++// its first message to notifyd.
++struct _xpc_event_publisher {
++	const char* name;
++	dispatch_queue_t queue;
++	void (^handler)(xpc_event_publisher_action_t action, uint64_t token, xpc_object_t descriptor);
++	void (^error_handler)(int error);
++	bool activated;
++};
+ 
+ XPC_EXPORT const char* const _xpc_event_key_name = "XPCEventName";
+ XPC_EXPORT const char* const _xpc_event_key_stream_name = "XPCEventStreamName";
+@@ -72,36 +98,40 @@ typedef struct _xpc_event_publisher_s {
+ 
+ XPC_EXPORT
+ void xpc_event_publisher_activate(xpc_event_publisher_t xpub) {
+-	if (xpub == NULL || xpub->activated)
++	struct _xpc_event_publisher* publisher = (struct _xpc_event_publisher*)xpub;
++
++	if (!publisher || publisher->activated) {
+ 		return;
+-	xpub->activated = true;
++	}
++	publisher->activated = true;
+ 
+-	void (^handler)(xpc_event_publisher_action_t, uint64_t, xpc_object_t) = xpub->handler;
+-	if (handler == NULL)
+-		// Nothing to deliver; without a handler there is no barrier
+-		// contract to honor.
++	if (!publisher->handler) {
+ 		return;
++	}
+ 
+-	// Deliver the barrier synchronously. Apple's real implementation
+-	// delivers it asynchronously on the publisher's queue, but the only
+-	// in-tree consumer (notifyd) just needs dispatch_mach_connect() to run
+-	// before dispatch_main(); synchronous delivery satisfies that without
+-	// depending on the queue being ready to run async blocks yet.
+-	handler(XPC_EVENT_PUBLISHER_ACTION_INITIAL_BARRIER, 0, NULL);
++	// There is nothing to replay, so go straight to the barrier. It has to be
++	// asynchronous: callers activate the publisher while still setting
++	// themselves up and only reach their run loop afterwards, and the handler
++	// is documented to run on the queue given to xpc_event_publisher_create().
++	dispatch_async(publisher->queue, ^{
++		publisher->handler(XPC_EVENT_PUBLISHER_ACTION_INITIAL_BARRIER, 0, NULL);
++	});
+ };
+ 
+ XPC_EXPORT
+ xpc_object_t xpc_event_publisher_create(const char* name, void* some_parameter) {
+-	xpc_event_publisher_t xpub = calloc(1, sizeof(struct _xpc_event_publisher_s));
+-	if (xpub == NULL)
++	struct _xpc_event_publisher* publisher = calloc(1, sizeof(*publisher));
++
++	if (!publisher) {
+ 		return NULL;
+-	xpub->name = name;
+-	// Apple passes the workloop/queue as the second parameter; callers
+-	// (notifyd) pass a dispatch queue. Retained for possible future async
+-	// delivery; the current implementation delivers the barrier
+-	// synchronously in activate().
+-	xpub->queue = (dispatch_queue_t) some_parameter;
+-	return (xpc_object_t) xpub;
++	}
++
++	publisher->name = name ? strdup(name) : NULL;
++	// The second parameter is the queue the handlers are invoked on.
++	publisher->queue = some_parameter ? (dispatch_queue_t)some_parameter : dispatch_get_main_queue();
++	dispatch_retain(publisher->queue);
++
++	return (xpc_object_t)publisher;
+ };
+ 
+ XPC_EXPORT
+@@ -139,25 +169,32 @@ au_asid_t xpc_event_publisher_get_subscriber_asid(xpc_event_publisher_t xpub, ui
+ 
+ XPC_EXPORT
+ void xpc_event_publisher_set_error_handler(xpc_event_publisher_t xpub, void (^handler)()) {
+-	if (xpub == NULL)
++	struct _xpc_event_publisher* publisher = (struct _xpc_event_publisher*)xpub;
++
++	if (!publisher) {
+ 		return;
+-	// The real signature takes a single `int error` argument.
+-	// NOTE: use Block_copy(), NOT [handler copy]. The latter sends an ObjC
+-	// message (objc_msgSend) which dereferences the block's isa; if the
+-	// caller's blocks runtime leaves isa NULL/unmapped (observed: notifyd
+-	// SEGV addr=0x0 inside [handler copy]), messaging crashes. Block_copy
+-	// operates on the block struct directly and is safe.
+-	xpub->error_handler = (void (^)(int)) Block_copy((const void*)handler);
++	}
++
++	// Only ever invoked for a failure of the (nonexistent) launchd event
++	// stream, so it is stored and never called.
++	if (publisher->error_handler) {
++		Block_release(publisher->error_handler);
++	}
++	publisher->error_handler = handler ? Block_copy((void (^)(int))handler) : NULL;
+ };
+ 
+ XPC_EXPORT
+ void xpc_event_publisher_set_handler(xpc_event_publisher_t xpub, void (^handler)()) {
+-	if (xpub == NULL)
++	struct _xpc_event_publisher* publisher = (struct _xpc_event_publisher*)xpub;
++
++	if (!publisher) {
+ 		return;
+-	// The real signature is:
+-	//   void (^)(xpc_event_publisher_action_t action,
+-	//            uint64_t event_token, xpc_object_t descriptor)
+-	xpub->handler = (void (^)(xpc_event_publisher_action_t, uint64_t, xpc_object_t)) Block_copy((const void*)handler);
++	}
++
++	if (publisher->handler) {
++		Block_release(publisher->handler);
++	}
++	publisher->handler = handler ? Block_copy((void (^)(xpc_event_publisher_action_t, uint64_t, xpc_object_t))handler) : NULL;
+ };
+ 
+ XPC_EXPORT
+diff --git a/src/pipe.m b/src/pipe.m
+index f60e6ac..c8af96c 100644
+--- a/src/pipe.m
++++ b/src/pipe.m
+@@ -209,8 +209,9 @@ out:
+ 				goto out;
+ 			}
+ 
+-			// The deserializer autoreleases its result. The C pipe API
+-			// transfers an owned reference to the caller.
++			// the deserializer returns an autoreleased dictionary, but our
++			// caller (via xpc_pipe_receive) owns the object it receives, so
++			// hand out a reference of our own.
+ 			*incomingMessage = [dict retain];
+ 
+ 			status = 0;
+@@ -251,6 +252,9 @@ out:
+ 				goto out;
+ 			}
+ 
++			// the deserializer returns an autoreleased dictionary, but our
++			// caller (via xpc_pipe_try_receive) owns the object it receives,
++			// so hand out a reference of our own.
+ 			*incomingMessage = [dict retain];
+ 			*replyPort = header->msgh_local_port;
+ 
+@@ -583,6 +587,9 @@ retry:
+ 					goto out;
+ 				}
+ 
++				// the deserializer returns an autoreleased dictionary, but our
++				// caller (via xpc_pipe_routine) owns the reply, so hand out a
++				// reference of our own.
+ 				*reply = [dict retain];
+ 
+ 				status = 0;

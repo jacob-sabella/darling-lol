@@ -1,0 +1,386 @@
+diff --git a/libsystem_trace/os_log.c b/libsystem_trace/os_log.c
+index 7239f3c..73d494e 100644
+--- a/libsystem_trace/os_log.c
++++ b/libsystem_trace/os_log.c
+@@ -28,6 +28,9 @@
+ #include "os_log_s.h"
+ #include "libtrace_assert.h"
+ #include <asl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
+ #include <os/log.h>
+ #import <os/object_private.h>
+ 
+@@ -66,6 +69,17 @@ static asl_object_t get_client() {
+ 	return client;
+ };
+ 
++/* Darling extension: DARLING_OS_LOG_STDERR echoes the unified log to stderr,
++   which is the only way to read it here, and also turns on the debug level. */
++static bool darling_os_log_verbose(void) {
++	static bool on = false;
++	static dispatch_once_t token;
++	dispatch_once(&token, ^{
++		on = getenv("DARLING_OS_LOG_STDERR") != NULL;
++	});
++	return on;
++}
++
+ os_log_t os_log_create(const char *subsystem, const char *category) {
+ 	libtrace_precondition(subsystem != NULL, "subsystem cannot be NULL");
+ 	libtrace_precondition(category != NULL, "category cannot be NULL");
+@@ -81,6 +95,14 @@ bool os_log_type_enabled(os_log_t log, os_log_type_t type) {
+ 	if (log == NULL) return false;
+ 	if (log->magic == OS_LOG_DISABLED_MAGIC) return false;
+ 
++	/* Debug logging is off unless somebody asks for it. Callers use this
++	   predicate to decide whether work that exists only to produce a log line
++	   is worth doing -- Security.framework, for one, symbolicates and demangles
++	   a 32-frame backtrace for every exception it throws when this returns
++	   true -- so claiming debug output is always wanted makes them pay for it
++	   even though nothing collects it. */
++	if (type == OS_LOG_TYPE_DEBUG) return darling_os_log_verbose();
++
+ 	return true;
+ }
+ 
+@@ -134,6 +156,23 @@ _os_log_impl(void *dso, os_log_t log, os_log_type_t type, const char *format, ui
+ 	}
+ 
+ 	char *decodedBuffer = os_log_decode_buffer(format, buf, size);
++	/* LOL_OSLOG: temporary instrumentation - remove before commit */
++	if (darling_os_log_verbose()) {
++		static const char *const lol_names[] = {
++			"DEFAULT", "INFO", "DEBUG", "ERROR", "FAULT"
++		};
++		const char *lol_type = "?";
++		switch (type) {
++			case OS_LOG_TYPE_DEFAULT: lol_type = lol_names[0]; break;
++			case OS_LOG_TYPE_INFO:    lol_type = lol_names[1]; break;
++			case OS_LOG_TYPE_DEBUG:   lol_type = lol_names[2]; break;
++			case OS_LOG_TYPE_ERROR:   lol_type = lol_names[3]; break;
++			case OS_LOG_TYPE_FAULT:   lol_type = lol_names[4]; break;
++		}
++		fprintf(stderr, "OSLOG[%d] %s %s/%s: %s\n", (int)getpid(), lol_type,
++				subsystem, category, decodedBuffer);
++		fflush(stderr);
++	}
+ 	asl_log(get_client(), message, level, "%s", decodedBuffer);
+ 	asl_release(message);
+ 	free(decodedBuffer);
+diff --git a/libsystem_trace/unpack_buffer.m b/libsystem_trace/unpack_buffer.m
+index 4f27cde..b891900 100644
+--- a/libsystem_trace/unpack_buffer.m
++++ b/libsystem_trace/unpack_buffer.m
+@@ -92,41 +92,106 @@ static bool readScalar(void* buffer, uint8_t length, uint64_t* outScalar) {
+ 	return true;
+ };
+ 
++// Bounds-checked readScalar(). The buffer and the format string are emitted as
++// a matched pair by the caller's compiler, but if they ever disagree - or if we
++// misparse the format string - nothing downstream would stop us walking off the
++// end of the buffer and handing whatever we found there to strnlen() as a
++// pointer. libtrace_assert() is not fatal, so it cannot be the thing that stops
++// us; these checks have to.
++static bool readScalarAt(const uint8_t* buffer, uint32_t bufferSize, uint32_t bufferIndex, uint8_t length, uint64_t* outScalar) {
++	*outScalar = 0;
++	if ((uint64_t)bufferIndex + length > bufferSize) return false;
++	return readScalar((void*)&buffer[bufferIndex], length, outScalar);
++}
++
++// Read the type/privacy/size descriptor that precedes each argument.
++#define os_log_read_item_header()                                                            \
++	do {                                                                                     \
++		if ((uint64_t)bufferIndex + 2 > bufferSize) {                                        \
++			libtrace_assert(false, "os_log buffer ends in the middle of an argument");        \
++			goto malformed;                                                                  \
++		}                                                                                    \
++		itemType = buffer[bufferIndex] >> 4;                                                 \
++		privacy = buffer[bufferIndex] & 0x0f;                                                \
++		++bufferIndex;                                                                       \
++		itemSize = buffer[bufferIndex];                                                      \
++		++bufferIndex;                                                                       \
++	} while (0)
++
++// Read an `itemSize`-byte argument and step over it.
++#define os_log_read_scalar(out, what)                                                        \
++	do {                                                                                     \
++		if (!readScalarAt(buffer, bufferSize, bufferIndex, itemSize, (out))) {               \
++			libtrace_assert(false, "failed to read " what " from buffer");                   \
++			goto malformed;                                                                  \
++		}                                                                                    \
++		bufferIndex += itemSize;                                                             \
++	} while (0)
++
+ __XNU_PRIVATE_EXTERN
+ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t bufferSize) {
+ 	uint32_t bufferIndex = 0;
+-	// uint8_t summaryByte = buffer[bufferIndex]; // not actually used, hence commented out
+-	bufferIndex++;
+-
+ 	uint8_t argsSeen = 0;
+-	uint8_t argCount = buffer[bufferIndex];
+-	bufferIndex++;
+-
++	uint8_t argCount = 0;
+ 	struct sbuf *sbuf = sbuf_new_auto();
+ 	size_t formatIndex = 0;
++	char *retval = NULL;
++
++	if (bufferSize < 2) {
++		libtrace_assert(false, "os_log buffer is too short to hold a header");
++		goto malformed;
++	}
++
++	// buffer[0] is a summary byte, which we have no use for.
++	bufferIndex++;
++	argCount = buffer[bufferIndex];
++	bufferIndex++;
+ 
+ 	while (formatString[formatIndex] != '\0') {
++		os_log_buffer_item_type_t itemType;
++		privacy_setting_t privacy;
++		uint8_t itemSize;
++		char* formattedArgument = NULL;
++		bool formattedArgumentNeedsFree = true;
++		size_t formattedArgumentLength = SIZE_MAX;
++
+ 		if (formatString[formatIndex] != '%') {
+ 			sbuf_putc(sbuf, formatString[formatIndex]);
+ 			formatIndex++;
+ 			continue;
+ 		}
+ 
+-		libtrace_assert(formatString[formatIndex] == '%', "next char not % (this shouldn't happen)");
+ 		formatIndex++;
+ 
+-		os_log_buffer_item_type_t itemType = buffer[bufferIndex] >> 4;
+-		privacy_setting_t privacy = buffer[bufferIndex] & 0x0f;
+-		++bufferIndex;
++		if (formatString[formatIndex] == '%') {
++			// An escaped percent sign. It has no argument in the buffer.
++			sbuf_putc(sbuf, '%');
++			formatIndex++;
++			continue;
++		}
+ 
+-		uint8_t itemSize = buffer[bufferIndex];
+-		++bufferIndex;
++		os_log_read_item_header();
+ 
+ 		libtrace_assert(argsSeen < argCount, "Too many format specifiers in os_log string (expected %d)", argCount);
+ 
+ 		if (formatString[formatIndex] == '{') {
+-			// just skip it; the buffer will tell us if it's public or private or unspecified
+-			formatString = strchr(formatString + formatIndex, '}') + 1;
++			// Skip the attribute list; the buffer's privacy bits already tell
++			// us whether the argument is public or private, so there is nothing
++			// in here we need.
++			//
++			// Only `formatIndex` may move. `formatString` has to keep pointing
++			// at the start of the string, because everything below indexes it
++			// by `formatIndex` - advancing the pointer instead leaves the two
++			// out of step, and then a "%{public}s" is read as an unknown
++			// specifier, the loop runs off the end of the format string into
++			// whatever constants follow it in __TEXT, and the first stray 's'
++			// it finds makes us strnlen() a garbage pointer.
++			const char *closingBrace = strchr(formatString + formatIndex, '}');
++			if (closingBrace == NULL) {
++				libtrace_assert(false, "unterminated %%{...} in os_log format string");
++				goto malformed;
++			}
++			formatIndex = (size_t)(closingBrace - formatString) + 1;
+ 		}
+ 
+ 		// skip these, for now
+@@ -167,29 +232,19 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			++formatIndex;
+ 		}
+ 
+-		char* formattedArgument = NULL;
+-		bool formattedArgumentNeedsFree = true;
+-		size_t formattedArgumentLength = SIZE_MAX;
+-
+ 		if (formatString[formatIndex] == 's') {
+ 			uint64_t maxLength = SIZE_MAX;
+ 			uint64_t pointer = 0;
+ 
+ 			if (itemType == os_log_buffer_item_type_count) {
+-				libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, &maxLength), "failed to read maximum string length from buffer");
+-				bufferIndex += itemSize;
+-				itemType = buffer[bufferIndex] >> 4;
+-				privacy = buffer[bufferIndex] & 0x0f;
+-				++bufferIndex;
+-				itemSize = buffer[bufferIndex];
+-				++bufferIndex;
++				os_log_read_scalar(&maxLength, "maximum string length");
++				os_log_read_item_header();
+ 			}
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_string, "expected buffer item to be a string");
+ 			libtrace_assert(itemSize == sizeof(const char*), "expected pointer size to match platform pointer length");
+ 
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, &pointer), "failed to read string pointer from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&pointer, "string pointer");
+ 
+ 			/* darling-lol: a NULL string pointer (os_log("%s", NULL))
+ 			 * must not kill the logging process in strnlen() below.
+@@ -206,20 +261,14 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			mbstate_t state = {0};
+ 
+ 			if (itemType == os_log_buffer_item_type_count) {
+-				libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, &maxLength), "failed to read maximum string length from buffer");
+-				bufferIndex += itemSize;
+-				itemType = buffer[bufferIndex] >> 4;
+-				privacy = buffer[bufferIndex] & 0x0f;
+-				++bufferIndex;
+-				itemSize = buffer[bufferIndex];
+-				++bufferIndex;
++				os_log_read_scalar(&maxLength, "maximum string length");
++				os_log_read_item_header();
+ 			}
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_string, "expected buffer item to be a string");
+ 			libtrace_assert(itemSize == sizeof(const wchar_t*), "expected pointer size to match platform pointer length");
+ 
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, &pointer), "failed to read string pointer from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&pointer, "string pointer");
+ 
+ 			// technically, this is wrong; the output string will be a multi-byte string of whatever locale the system is currently using
+ 			// but we're kinda stuck with it because the input string *does* need to be in the current locale :/
+@@ -228,6 +277,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			wideArgument = (const wchar_t*)pointer;
+ 			formattedArgumentLength = wcsnrtombs(NULL, &wideArgument, maxLength, 0, &state);
+ 			libtrace_assert(formattedArgumentLength != (size_t)-1, "wide character string argument cannot be converted to multi-byte string");
++			if (formattedArgumentLength == (size_t)-1) goto malformed;
+ 			formattedArgument = calloc(formattedArgumentLength + 1, sizeof(char));
+ 
+ 			memset(&state, 0, sizeof(state));
+@@ -240,19 +290,13 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			uint64_t pointer = 0;
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_count, "expected buffer item to be a count");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, &length), "failed to read maximum data length from buffer");
+-			bufferIndex += itemSize;
+-			itemType = buffer[bufferIndex] >> 4;
+-			privacy = buffer[bufferIndex] & 0x0f;
+-			++bufferIndex;
+-			itemSize = buffer[bufferIndex];
+-			++bufferIndex;
++			os_log_read_scalar(&length, "maximum data length");
++			os_log_read_item_header();
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_pointer, "expected buffer item to be a pointer");
+ 			libtrace_assert(itemSize == sizeof(const void*), "expected pointer size to match platform pointer length");
+ 
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, &pointer), "failed to read pointer from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&pointer, "pointer");
+ 
+ 			struct sbuf *dataHex = sbuf_new_auto();
+ 			sbuf_putc(dataHex, '<');
+@@ -272,8 +316,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			NSString* description = nil;
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_objc, "expected buffer item to be an object pointer");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, (uint64_t*)&integer), "failed to read object pointer from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&integer, "object pointer");
+ 
+ 			object = (id)integer;
+ 
+@@ -301,8 +344,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_scalar, "expected buffer item to be a scalar");
+ 			libtrace_assert(itemSize == 1, "expected item size to be 1");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, (uint64_t*)&integer), "failed to read scalar from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&integer, "scalar");
+ 
+ 			character = (char)integer;
+ 			asprintf(&formattedArgument, "%c", character);
+@@ -312,8 +354,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			int64_t integer;
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_scalar, "expected buffer item to be a scalar");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, (uint64_t*)&integer), "failed to read scalar from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar((uint64_t*)&integer, "scalar");
+ 
+ 			asprintf(&formattedArgument, "%lld", integer);
+ 
+@@ -323,8 +364,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			char format[] = { '%', 'l', 'l', formatString[formatIndex], '\0' };
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_scalar, "expected buffer item to be a scalar");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, (uint64_t*)&integer), "failed to read scalar from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&integer, "scalar");
+ 
+ 			asprintf(&formattedArgument, format, integer);
+ 
+@@ -334,8 +374,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			void* pointer = NULL;
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_scalar, "expected buffer item to be a scalar");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, (uint64_t*)&integer), "failed to read scalar from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar(&integer, "scalar");
+ 
+ 			pointer = (void*)integer;
+ 			asprintf(&formattedArgument, "%p", pointer);
+@@ -346,8 +385,7 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			char format[] = { '%', formatString[formatIndex], '\0' };
+ 
+ 			libtrace_assert(itemType == os_log_buffer_item_type_scalar, "expected buffer item to be a scalar");
+-			libtrace_assert(readScalar(&buffer[bufferIndex], itemSize, (uint64_t*)&decimal), "failed to read scalar from buffer");
+-			bufferIndex += itemSize;
++			os_log_read_scalar((uint64_t*)&decimal, "scalar");
+ 
+ 			asprintf(&formattedArgument, format, decimal);
+ 
+@@ -356,6 +394,11 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			asprintf(&formattedArgument, "<missing formatter for %%%c>", formatString[formatIndex]);
+ 
+ 			// skip the item in the buffer
++			if ((uint64_t)bufferIndex + itemSize > bufferSize) {
++				libtrace_assert(false, "os_log buffer ends in the middle of an argument");
++				free(formattedArgument);
++				goto malformed;
++			}
+ 			bufferIndex += itemSize;
+ 
+ 			libtrace_assert(false, "Unknown format argument %%%c in os_log() call", formatString[formatIndex]);
+@@ -370,6 +413,12 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 			formattedArgument = "(null)";
+ 			formattedArgumentNeedsFree = false;
+ 		}
++		if (formattedArgument == NULL) {
++			// Only reachable if one of the asprintf()s above failed.
++			libtrace_assert(false, "failed to format an os_log argument");
++			goto malformed;
++		}
++
+ 		formattedArgumentLength = strnlen(formattedArgument, formattedArgumentLength);
+ 
+ #if OS_LOG_PRIVACY
+@@ -389,7 +438,15 @@ char *os_log_decode_buffer(const char *formatString, uint8_t *buffer, uint32_t b
+ 		argsSeen++;
+ 	}
+ 
+-	char *retval = strdup(sbuf_data(sbuf));
++	goto done;
++
++malformed:
++	// Emit what we managed to decode rather than nothing; the message is more
++	// useful with a marker on the end than it is missing entirely.
++	sbuf_cat(sbuf, "<malformed os_log message>");
++
++done:
++	retval = strdup(sbuf_data(sbuf));
+ 	sbuf_delete(sbuf);
+ 	return retval;
+ }

@@ -1,0 +1,17 @@
+diff --git a/src/malloc.c b/src/malloc.c
+index b882aba..0e08593 100644
+--- a/src/malloc.c
++++ b/src/malloc.c
+@@ -1610,6 +1610,12 @@ _malloc_zone_malloc(malloc_zone_t *zone, size_t size, malloc_zone_options_t mzo)
+ 	MALLOC_TRACE(TRACE_malloc | DBG_FUNC_END, (uintptr_t)zone, size, (uintptr_t)ptr, 0);
+ out:
+ 	if (os_unlikely(ptr == NULL)) {
++		// LOL_VM: temporary, revert before committing.
++		if (size != 0) {
++			malloc_report(ASL_LEVEL_ERR,
++					"LOL_VM: malloc_zone_malloc returning NULL for %zu bytes (zone %p)\n",
++					size, zone);
++		}
+ 		malloc_set_errno_fast(mzo, ENOMEM);
+ 	}
+ 	return ptr;

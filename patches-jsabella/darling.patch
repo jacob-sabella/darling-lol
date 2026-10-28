@@ -1,0 +1,2463 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 918cdd142..73b32f472 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -201,6 +201,15 @@ install(DIRECTORY DESTINATION libexec/darling/private)
+ install(DIRECTORY DESTINATION libexec/darling/private/etc)
+ install(DIRECTORY DESTINATION libexec/darling/private/var)
+ install(DIRECTORY DESTINATION libexec/darling/private/tmp)
++install(DIRECTORY DESTINATION libexec/darling/private/var/tmp)
++
++# /tmp and /var/tmp are 1777 on macOS, and they have to be here too: everything
++# inside the prefix runs as the unprivileged user, so with CMake's default 0755
++# root-owned directories nothing can create a temporary file at all. CMake's
++# permission keywords cannot express the sticky bit, hence the explicit chmod.
++foreach(_darling_tmp_dir private/tmp private/var/tmp)
++	install(CODE "execute_process(COMMAND chmod 1777 \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/libexec/darling/${_darling_tmp_dir}\")")
++endforeach()
+ InstallSymlink(private/etc ${CMAKE_INSTALL_PREFIX}/libexec/darling/etc)
+ InstallSymlink(private/var ${CMAKE_INSTALL_PREFIX}/libexec/darling/var)
+ 
+diff --git a/cmake/use_ld64.cmake b/cmake/use_ld64.cmake
+index 374f43528..a69de8040 100644
+--- a/cmake/use_ld64.cmake
++++ b/cmake/use_ld64.cmake
+@@ -174,7 +174,8 @@ FUNCTION(use_ld64 target)
+ -Wl,-dylib_file,/usr/lib/native/libXcursor.dylib:${CMAKE_BINARY_DIR}/src/native/libXcursor.dylib \
+ -Wl,-dylib_file,/usr/lib/native/libXext.dylib:${CMAKE_BINARY_DIR}/src/native/libXext.dylib \
+ -Wl,-dylib_file,/usr/lib/native/libxkbfile.dylib:${CMAKE_BINARY_DIR}/src/native/libxkbfile.dylib \
+--Wl,-dylib_file,/usr/lib/native/libXRandR.dylib:${CMAKE_BINARY_DIR}/src/native/libXRandR.dylib")
++-Wl,-dylib_file,/usr/lib/native/libXRandR.dylib:${CMAKE_BINARY_DIR}/src/native/libXRandR.dylib \
++-Wl,-dylib_file,/usr/lib/native/libXss.dylib:${CMAKE_BINARY_DIR}/src/native/libXss.dylib")
+ 
+ 	add_dependencies(${target} ${APPLE_TARGET_TRIPLET_PRIMARY}-ld)
+ 
+diff --git a/src/CoreAudio/AudioToolbox/AudioConverter.cpp b/src/CoreAudio/AudioToolbox/AudioConverter.cpp
+index 5672fcba1..b9c6faf6a 100644
+--- a/src/CoreAudio/AudioToolbox/AudioConverter.cpp
++++ b/src/CoreAudio/AudioToolbox/AudioConverter.cpp
+@@ -37,18 +37,12 @@ static bool audioTrace() {
+     return enabled;
+ }
+ 
++#include "lolac.h"
+ 
+ OSStatus AudioConverterNew(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, AudioConverterRef* outAudioConverter)
+ {
+-    OSStatus status = AudioConverter::create(inSourceFormat, inDestinationFormat, (AudioConverter**)outAudioConverter);
+-    if (status == noErr && outAudioConverter && *outAudioConverter) {
+-        std::lock_guard<std::mutex> lock(converterMutex);
+-        liveConverters.insert(*outAudioConverter);
+-    }
+-    if (audioTrace())
+-        std::fprintf(stderr, "RIOT_AUDIO new status=%d converter=%p\n", status,
+-            outAudioConverter ? *outAudioConverter : nullptr);
+-    return status;
++	LOL_AC("AudioConverterNew enter\n");
++	return AudioConverter::create(inSourceFormat, inDestinationFormat, (AudioConverter**)outAudioConverter);
+ }
+ 
+ OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, UInt32 inNumberClassDescriptions, const AudioClassDescription* nClassDescriptions, AudioConverterRef* outAudioConverter)
+@@ -59,13 +53,11 @@ OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFo
+ 
+ OSStatus AudioConverterReset(AudioConverterRef inAudioConverter)
+ {
+-	if (inAudioConverter)
+-	{
+-		((AudioConverter*)inAudioConverter)->flush();
+-		return noErr;
+-	}
+-	else
++	if (!AudioConverter::isLive(inAudioConverter))
+ 		return paramErr;
++
++	((AudioConverter*)inAudioConverter)->flush();
++	return noErr;
+ }
+ 
+ OSStatus AudioConverterDispose(AudioConverterRef inAudioConverter)
+@@ -79,22 +71,39 @@ OSStatus AudioConverterDispose(AudioConverterRef inAudioConverter)
+         if (!liveConverters.erase(inAudioConverter))
+             return paramErr;
+     }
++	LOL_AC("AudioConverterDispose conv=%p live=%d\n", inAudioConverter, (int) AudioConverter::isLive(inAudioConverter));
++
++	/* Disposing of something this framework never handed out, or handed out and
++	   has already taken back, is the caller's mistake; it is not a reason to
++	   dereference whatever it passed. */
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	delete (AudioConverter*)inAudioConverter;
+ 	return noErr;
+ }
+ 
+ OSStatus AudioConverterGetProperty(AudioConverterRef inAudioConverter, AudioConverterPropertyID inPropertyID, UInt32 *ioPropertyDataSize, void *outPropertyData)
+ {
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	return ((AudioConverter*)inAudioConverter)->getProperty(inPropertyID, ioPropertyDataSize, outPropertyData);
+ }
+ 
+ OSStatus AudioConverterGetPropertyInfo(AudioConverterRef inAudioConverter, AudioConverterPropertyID inPropertyID, UInt32 *outSize, Boolean *outWritable)
+ {
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	return ((AudioConverter*)inAudioConverter)->getPropertyInfo(inPropertyID, outSize, outWritable);
+ }
+ 
+ OSStatus AudioConverterSetProperty(AudioConverterRef inAudioConverter, AudioConverterPropertyID inPropertyID, UInt32 inPropertyDataSize, const void *inPropertyData)
+ {
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	return ((AudioConverter*)inAudioConverter)->setProperty(inPropertyID, inPropertyDataSize, inPropertyData);
+ }
+ 
+@@ -103,6 +112,9 @@ OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32
+ 	AudioBufferList in, out;
+ 	OSStatus stat;
+ 
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	in.mNumberBuffers = out.mNumberBuffers = 1;
+ 
+ 	in.mBuffers[0].mNumberChannels = 2;
+@@ -122,6 +134,11 @@ OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32
+ 
+ OSStatus AudioConverterFillComplexBuffer(AudioConverterRef inAudioConverter, AudioConverterComplexInputDataProc inInputDataProc, void *inInputDataProcUserData, UInt32 *ioOutputDataPacketSize, AudioBufferList *outOutputData, AudioStreamPacketDescription* outPacketDescription)
+ {
++	LOL_AC("AudioConverterFillComplexBuffer conv=%p\n", inAudioConverter);
++
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	return ((AudioConverter*)inAudioConverter)->fillComplex(inInputDataProc, inInputDataProcUserData, ioOutputDataPacketSize, outOutputData, outPacketDescription);
+ }
+ 
+@@ -130,6 +147,10 @@ OSStatus AudioConverterConvertComplexBuffer(AudioConverterRef inAudioConverter,
+ 	OSStatus status;
+ 	UInt32 dataPacketSize;
+ 	int64_t totalOutBytes = 0;
++
++	if (!AudioConverter::isLive(inAudioConverter))
++		return paramErr;
++
+ 	typedef OSStatus (^CallbackBlock)(AudioConverterRef audioConverter, UInt32* numberDataPackets, AudioBufferList* data, AudioStreamPacketDescription** dataPacketDescription);
+ 	
+ 	CallbackBlock callbackBlock =
+diff --git a/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp b/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp
+index fc4016e60..0491c91e8 100644
+--- a/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp
++++ b/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp
+@@ -28,25 +28,45 @@ along with Darling.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ extern "C" {
+ #include <libavcodec/avcodec.h>
+-#include <libavutil/opt.h>
++#include <libavutil/channel_layout.h>
+ #include <libavutil/mem.h>
++#include <libavutil/opt.h>
++#include <libavutil/samplefmt.h>
+ }
+ 
++/* FFmpeg 5.1 replaced the integer channel-layout options with AVChannelLayout
++   and FFmpeg 7 removed the old ones outright, so av_opt_set_int() on
++   "in_channel_layout" fails there.  Nothing checked that, which left the
++   resampler with no layout at all and made swr_init() fail with EINVAL on every
++   stream; that failure was then reported by throwing, and the throw is what
++   used to take the process down. */
++#if LIBSWRESAMPLE_VERSION_MAJOR > 4 || (LIBSWRESAMPLE_VERSION_MAJOR == 4 && LIBSWRESAMPLE_VERSION_MINOR >= 5)
++#	define DARLING_HAVE_CHANNEL_LAYOUT_API 1
++#endif
++
+ static constexpr int ENCODER_FRAME_SAMPLES = 1024;
+ 
++#include "lolac.h"
++#include <mutex>
++#include <unordered_set>
++
+ // http://blinkingblip.wordpress.com/
+ 
+-static void throwFFMPEGError(int errnum, const char* function)
++bool AudioConverter::fail(int averr, const char* what)
+ {
+ 	char buf[256];
+-	std::stringstream ss;
+ 
+-	if (av_strerror(errnum, buf, sizeof(buf)) == 0)
+-		ss << function << ": " << buf;
+-	else
+-		ss << function << ": unknown error";
++	// Said once: the caller keeps asking for data it is never going to get.
++	if (!m_failed)
++	{
++		if (av_strerror(averr, buf, sizeof(buf)) != 0)
++			std::strcpy(buf, "unknown error");
+ 
+-	throw std::runtime_error(ss.str());
++		std::cerr << "AudioConverter: " << what << ": " << buf << std::endl;
++	}
++
++	m_failed = true;
++	return false;
+ }
+ 
+ AudioConverter::AudioConverter(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat)
+@@ -59,11 +79,48 @@ AudioConverter::AudioConverter(const AudioStreamBasicDescription* inSourceFormat
+ void AudioConverter::flush()
+ {
+ 	TRACE();
+-	avcodec_flush_buffers(m_decoder);
+-	avcodec_flush_buffers(m_encoder);
++
++	/* The encoder is only opened once the first packet has been seen, and
++	   avcodec_flush_buffers() goes straight through the context's codec
++	   pointer, so flushing a converter that has not converted anything yet -
++	   which is exactly what an application does when it resets one before use -
++	   would dereference null. */
++	if (m_decoder != nullptr && avcodec_is_open(m_decoder))
++		avcodec_flush_buffers(m_decoder);
++	if (m_encoder != nullptr && avcodec_is_open(m_encoder))
++		avcodec_flush_buffers(m_encoder);
+ 	//avcodec_close(m_encoder);
+ }
+ 
++/* Chromium's GPU process disposes of a decoder whose converter it never created,
++   and the stale field it passes - freed memory, carrying whatever the allocator
++   left there - was dereferenced on the spot and took the process down.  Keeping
++   track of which references are live costs one hash lookup per call and turns
++   that into the paramErr the API is documented to answer with. */
++static std::mutex g_liveConvertersMutex;
++static std::unordered_set<const void*> g_liveConverters;
++
++bool AudioConverter::isLive(const void* converter)
++{
++	if (converter == nullptr)
++		return false;
++
++	std::lock_guard<std::mutex> lock(g_liveConvertersMutex);
++	return g_liveConverters.find(converter) != g_liveConverters.end();
++}
++
++static void rememberConverter(const void* converter)
++{
++	std::lock_guard<std::mutex> lock(g_liveConvertersMutex);
++	g_liveConverters.insert(converter);
++}
++
++static void forgetConverter(const void* converter)
++{
++	std::lock_guard<std::mutex> lock(g_liveConvertersMutex);
++	g_liveConverters.erase(converter);
++}
++
+ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, AudioConverter** out)
+ {
+ 	TRACE2(inSourceFormat, inDestinationFormat);
+@@ -99,7 +156,17 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+ 		return paramErr;
+ 	}
+ 
++	LOL_AC("create in: id=%08x flags=%08x rate=%g ch=%u bits=%u bpf=%u bpp=%u fpp=%u -> out: id=%08x flags=%08x rate=%g ch=%u bits=%u bpf=%u bpp=%u fpp=%u (avid in=%d out=%d)\n",
++		(unsigned) inSourceFormat->mFormatID, (unsigned) inSourceFormat->mFormatFlags, (double) inSourceFormat->mSampleRate,
++		(unsigned) inSourceFormat->mChannelsPerFrame, (unsigned) inSourceFormat->mBitsPerChannel,
++		(unsigned) inSourceFormat->mBytesPerFrame, (unsigned) inSourceFormat->mBytesPerPacket, (unsigned) inSourceFormat->mFramesPerPacket,
++		(unsigned) inDestinationFormat->mFormatID, (unsigned) inDestinationFormat->mFormatFlags, (double) inDestinationFormat->mSampleRate,
++		(unsigned) inDestinationFormat->mChannelsPerFrame, (unsigned) inDestinationFormat->mBitsPerChannel,
++		(unsigned) inDestinationFormat->mBytesPerFrame, (unsigned) inDestinationFormat->mBytesPerPacket, (unsigned) inDestinationFormat->mFramesPerPacket,
++		(int) idIn, (int) idOut);
++
+ 	*out = new AudioConverter(inSourceFormat, inDestinationFormat);
++	rememberConverter(*out);
+ 
+ 	(*out)->m_decoder = cIn = avcodec_alloc_context3(codecIn);
+ 	
+@@ -124,6 +191,11 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+ 	{
+ 		delete *out;
+         *out = nullptr;
++
++		/* The caller is being told this failed, so it has no business being
++		   handed the converter that just went away with it. */
++		*out = nullptr;
++
+ 		std::cerr << "AudioConverter::create(): avcodec_open() failed, format in = " << std::hex << inSourceFormat->mFormatID << ", out = " << inDestinationFormat->mFormatID << std::dec << std::endl;
+ 
+ 		return paramErr;
+@@ -137,19 +209,23 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+ 	return noErr;
+ }
+ 
+-void AudioConverter::initEncoder()
++bool AudioConverter::initEncoder()
+ {
+ 	int err;
+ 	
+ 	if (m_encoderInitialized)
+-		throw std::logic_error("Encoder already initialized");
++		return fail(AVERROR(EINVAL), "encoder already initialized");
+ 	
+ 	m_encoder->codec_type = AVMEDIA_TYPE_AUDIO;
+ 	m_encoder->bit_rate = m_outBitRate;
+ #warning "TODO: Remove deprecated 'channels' once we no longer support older distros" 
+ #if LIBAVCODEC_VERSION_MAJOR >= 61
+-	m_encoder->ch_layout.order = AV_CHANNEL_ORDER_UNSPEC;
+-	m_encoder->ch_layout.nb_channels = m_destinationFormat.mChannelsPerFrame;
++	/* An unspecified order names no channels, and both the encoder and the
++	   resampler reject a layout they cannot identify the channels of.  All the
++	   destination description says is how many there are, so the default layout
++	   for that count is the best that can be said about it. */
++	av_channel_layout_uninit(&m_encoder->ch_layout);
++	av_channel_layout_default(&m_encoder->ch_layout, m_destinationFormat.mChannelsPerFrame);
+ #else
+ 	m_encoder->channels = m_destinationFormat.mChannelsPerFrame;
+ 	m_encoder->channel_layout = CAChannelCountToLayout(m_destinationFormat.mChannelsPerFrame);
+@@ -166,13 +242,16 @@ void AudioConverter::initEncoder()
+ 	
+ 	err = avcodec_open2(m_encoder, m_codecOut, 0);
+ 	if (err < 0)
+-		throwFFMPEGError(err, "avcodec_open2() encoder");
++		return fail(err, "avcodec_open2() encoder");
+ 	
+-	allocateBuffers();
++	if (!allocateBuffers())
++		return false;
++
+ 	m_encoderInitialized = true;
++	return true;
+ }
+ 
+-void AudioConverter::allocateBuffers()
++bool AudioConverter::allocateBuffers()
+ {
+ #ifdef HAVE_AV_FRAME_ALLOC
+ 	m_audioFrame = av_frame_alloc();
+@@ -185,8 +264,7 @@ void AudioConverter::allocateBuffers()
+ 
+ #warning "TODO: Remove deprecated 'channels' once we no longer support older distros" 
+ #if LIBAVCODEC_VERSION_MAJOR >= 61
+-	m_audioFrame->ch_layout.order = m_encoder->ch_layout.order;
+-	m_audioFrame->ch_layout.nb_channels = m_encoder->ch_layout.nb_channels;
++	av_channel_layout_copy(&m_audioFrame->ch_layout, &m_encoder->ch_layout);
+ 	int audioSampleBuffer_size = av_samples_get_buffer_size(nullptr, m_encoder->ch_layout.nb_channels, m_audioFrame->nb_samples, m_encoder->sample_fmt, 0);
+ #else
+ 	m_audioFrame->channel_layout = m_encoder->channel_layout;
+@@ -195,10 +273,7 @@ void AudioConverter::allocateBuffers()
+ 	void* audioSampleBuffer = (uint8_t*) av_malloc(audioSampleBuffer_size);
+ 
+ 	if (!audioSampleBuffer)
+-	{
+-		std::cerr << "AudioConverter::allocateBuffers(): Failed to allocate sample buffer\n";
+-		throw std::runtime_error("AudioConverter::allocateBuffers(): Failed to allocate sample buffer");
+-	}
++		return fail(AVERROR(ENOMEM), "allocateBuffers(): sample buffer");
+ 
+ 	// Setup the data pointers in the AVFrame
+ #if LIBAVCODEC_VERSION_MAJOR >= 61
+@@ -209,14 +284,16 @@ void AudioConverter::allocateBuffers()
+ 		(const uint8_t*) audioSampleBuffer, audioSampleBuffer_size, 0 ); err < 0)
+ #endif
+ 	{
+-		std::cerr << "AudioConverter::allocateBuffers(): Could not set up audio frame\n";
+-		throw std::runtime_error("AudioConverter::allocateBuffers(): Could not set up audio frame");
++		return fail(err, "allocateBuffers(): avcodec_fill_audio_frame()");
+ 	}
++
++	return true;
+ }
+ 
+ AudioConverter::~AudioConverter()
+ {
+ 	TRACE();
++	forgetConverter(this);
+ 	if (m_decoder)
+ 		avcodec_free_context(&m_decoder);
+ 	if (m_encoder)
+@@ -332,20 +409,52 @@ OSStatus AudioConverter::feedInput(AudioConverterComplexInputDataProc dataProc,
+ 	
+ 	m_avpkt.size = bufferList.mBuffers[0].mDataByteSize;
+ 	m_avpkt.data = (uint8_t*) bufferList.mBuffers[0].mData;
++
++	LOL_AC("feedInput packets=%u size=%d data=%p\n", (unsigned) numDataPackets, (int) m_avpkt.size, m_avpkt.data);
+ 	
+ 	return noErr;
+ }
+ 
+-void AudioConverter::setupResampler(const AVFrame* frame)
++bool AudioConverter::setupResampler(const AVFrame* frame)
+ {
+ 	int err;
+ 	
+ 	if (m_resampler != nullptr)
+-		throw std::logic_error("Resampler already created");
++		return fail(AVERROR(EINVAL), "resampler already created");
+ 	
+-	m_resampler = swr_alloc();
+ 	m_targetFormat = CACodecSampleFormat(&m_destinationFormat);
+-	
++
++	if (m_targetFormat == AV_SAMPLE_FMT_NONE)
++		return fail(AVERROR(EINVAL), "unsupported destination sample format");
++
++#ifdef DARLING_HAVE_CHANNEL_LAYOUT_API
++	AVChannelLayout inLayout = {}, outLayout = {};
++
++	/* The decoder knows what the input really is; the destination description
++	   only gives a channel count, so all that can be said about the output is
++	   the default layout for that many channels. */
++	if (frame->ch_layout.nb_channels > 0)
++		av_channel_layout_copy(&inLayout, &frame->ch_layout);
++	else
++		av_channel_layout_default(&inLayout, m_sourceFormat.mChannelsPerFrame);
++
++	av_channel_layout_default(&outLayout, m_destinationFormat.mChannelsPerFrame);
++
++	err = swr_alloc_set_opts2(&m_resampler, &outLayout, m_targetFormat,
++		m_destinationFormat.mSampleRate, &inLayout,
++		(enum AVSampleFormat) frame->format, frame->sample_rate, 0, nullptr);
++
++	av_channel_layout_uninit(&inLayout);
++	av_channel_layout_uninit(&outLayout);
++
++	if (err < 0)
++		return fail(err, "swr_alloc_set_opts2()");
++#else
++	m_resampler = swr_alloc();
++
++	if (m_resampler == nullptr)
++		return fail(AVERROR(ENOMEM), "swr_alloc()");
++
+ 	av_opt_set_int(m_resampler, "in_channel_layout", CAChannelCountToLayout(m_sourceFormat.mChannelsPerFrame), 0);
+ 	av_opt_set_int(m_resampler, "out_channel_layout", CAChannelCountToLayout(m_destinationFormat.mChannelsPerFrame), 0);
+ 	av_opt_set_int(m_resampler, "in_channels", m_sourceFormat.mChannelsPerFrame, 0);
+@@ -354,6 +463,7 @@ void AudioConverter::setupResampler(const AVFrame* frame)
+ 	av_opt_set_int(m_resampler, "out_sample_rate", m_destinationFormat.mSampleRate, 0);
+ 	av_opt_set_int(m_resampler, "in_sample_fmt", frame->format, 0);
+ 	av_opt_set_int(m_resampler, "out_sample_fmt", m_targetFormat, 0);
++#endif
+ 
+ #ifdef DEBUG_AUDIOCONVERTER
+ 	std::cout << "RESAMPLER:\n";
+@@ -369,7 +479,14 @@ void AudioConverter::setupResampler(const AVFrame* frame)
+ 	
+ 	err = swr_init(m_resampler);
+ 	if (err < 0)
+-		throwFFMPEGError(err, "swr_init()");
++		return fail(err, "swr_init()");
++
++	LOL_AC("resampler ready: in fmt=%d rate=%d ch=%d -> out fmt=%d rate=%g ch=%u\n",
++		(int) frame->format, (int) frame->sample_rate, (int) frame->ch_layout.nb_channels,
++		(int) m_targetFormat, (double) m_destinationFormat.mSampleRate,
++		(unsigned) m_destinationFormat.mChannelsPerFrame);
++
++	return true;
+ }
+ 
+ OSStatus AudioConverter::fillComplex(AudioConverterComplexInputDataProc dataProc, void* opaque,
+@@ -377,6 +494,12 @@ OSStatus AudioConverter::fillComplex(AudioConverterComplexInputDataProc dataProc
+ {
+ 	AVFrame* srcaudio;
+ 
++	if (m_failed)
++		return ioErr;
++
++	LOL_AC("fillComplex buffers=%u size0=%u\n", (unsigned) outOutputData->mNumberBuffers,
++		(unsigned) (outOutputData->mNumberBuffers ? outOutputData->mBuffers[0].mDataByteSize : 0));
++
+ #ifdef HAVE_AV_FRAME_ALLOC
+ 	srcaudio = av_frame_alloc();
+ 	av_frame_unref(srcaudio);
+@@ -480,7 +603,7 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+ #if 0
+ 		err = avcodec_decode_audio4(m_decoder, srcaudio, &gotFrame, &m_avpkt);
+ 		if (err < 0)
+-			throwFFMPEGError(err, "avcodec_decode_audio4()");
++			return fail(err, "avcodec_decode_audio4()");
+ 
+ 		m_avpkt.size -= err;
+ 		m_avpkt.data += err;
+@@ -494,7 +617,7 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+ 				err = 0;
+ 			}
+ 			if (err < 0) {
+-				throwFFMPEGError(err, "avcodec_send_packet()");
++				return fail(err, "avcodec_send_packet()");
+ 			}
+ 		} else {
+ 			// on success, the data packet has been consumed entirely
+@@ -506,23 +629,27 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+ 
+ 		if (err < 0) {
+ 			gotFrame = false;
+-			if (err == AVERROR(EAGAIN)) {
++			if (err == AVERROR(EAGAIN) || err == AVERROR_EOF) {
+ 				// we need to send more packets before consuming a frame
+ 				err = 0;
+ 			}
+ 			if (err < 0) {
+-				throwFFMPEGError(err, "avcodec_receive_frame()");
++				return fail(err, "avcodec_receive_frame()");
+ 			}
+ 		} else {
+ 			// on success, we have a valid frame
+ 			gotFrame = true;
++			LOL_AC("decoded frame fmt=%d rate=%d ch=%d samples=%d data0=%p\n",
++				(int) srcaudio->format, (int) srcaudio->sample_rate,
++				(int) srcaudio->ch_layout.nb_channels, (int) srcaudio->nb_samples,
++				srcaudio->data[0]);
+ 		}
+ #endif
+ 
+ 		if (gotFrame)
+ 		{
+-			if (!m_resampler)
+-				setupResampler(srcaudio);
++			if (!m_resampler && !setupResampler(srcaudio))
++				return false;
+ 
+ #ifdef DEBUG_AUDIOCONVERTER
+ 			m_resamplerInput.write((char*) srcaudio->data, srcaudio->nb_samples * 2 * m_sourceFormat.mChannelsPerFrame);
+@@ -530,9 +657,11 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+ #endif
+ 			
+ 			// Resample PCM
++			LOL_AC("swr_convert in samples=%d\n", (int) srcaudio->nb_samples);
+ 			err = swr_convert(m_resampler, nullptr, 0, (const uint8_t**)&srcaudio->data[0], srcaudio->nb_samples);
++			LOL_AC("swr_convert in -> %d\n", err);
+ 			if (err < 0)
+-				throwFFMPEGError(err, "swr_convert()");
++				return fail(err, "swr_convert() input");
+ 		}
+ 	}
+ 	while (!gotFrame);
+@@ -542,109 +671,118 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+ 
+ bool AudioConverter::feedEncoder()
+ {
+-	int gotFrame = 0, err;
+-	uint8_t *output;
++	uint8_t *output = nullptr;
+ 	int out_linesize;
+ 	int avail;
++	int err;
+ 
+ 	if (!m_resampler)
+ 		return false;
+ 
+-	if (!m_encoderInitialized)
+-		initEncoder();
++	if (!m_encoderInitialized && !initEncoder())
++		return false;
+ 	
+ 	assert(m_avpktOutUsed == m_avpktOut.size);
+ 
+-	const size_t bytesPerSample = m_destinationFormat.mBitsPerChannel / 8;
++	/* The prebuffer holds what the resampler wrote, so its frame size has to be
++	   measured in the sample format the resampler was given, not in the
++	   destination's bits per channel: those describe the stream rather than the
++	   container FFmpeg carries a sample in, and 24-bit samples travel in 32-bit
++	   ones.  Taken from the description instead, every frame read back out of
++	   the prebuffer was three quarters of a frame long. */
++	const size_t bytesPerSample = av_get_bytes_per_sample(m_targetFormat);
+ 	const size_t bytesPerFrame = m_destinationFormat.mChannelsPerFrame * bytesPerSample;
+ 	const size_t requiredBytes = bytesPerFrame * ENCODER_FRAME_SAMPLES;
+ 
++	if (bytesPerFrame == 0)
++		return fail(AVERROR(EINVAL), "destination format has no frame size");
++
++	/* A planar format wants one pointer per channel and there is only one here;
++	   handing it over anyway would have the resampler write the second channel
++	   over whatever follows `output` on the stack. */
++	if (av_sample_fmt_is_planar(m_targetFormat) && m_destinationFormat.mChannelsPerFrame > 1)
++		return fail(AVERROR(EINVAL), "planar destination format is not supported");
++
+ 	while (m_audioFramePrebuf.size() < requiredBytes && (avail = swr_get_out_samples(m_resampler, 0)) > 0)
+ 	{
+-		av_samples_alloc(&output, &out_linesize, m_destinationFormat.mChannelsPerFrame,
+-			avail, m_encoder->sample_fmt, 0);
++		int converted;
+ 
+-		if ((avail = swr_convert(m_resampler, &output, avail, nullptr, 0)) < 0)
++		err = av_samples_alloc(&output, &out_linesize, m_destinationFormat.mChannelsPerFrame,
++			avail, m_targetFormat, 0);
++
++		/* av_samples_alloc() leaves `output` alone when it fails, so going on
++		   regardless meant copying from whatever happened to be on the stack. */
++		if (err < 0)
++			return fail(err, "av_samples_alloc()");
++
++		LOL_AC("swr_convert out avail=%d linesize=%d output=%p\n", avail, out_linesize, output);
++		converted = swr_convert(m_resampler, &output, avail, nullptr, 0);
++		LOL_AC("swr_convert out -> %d\n", converted);
++
++		if (converted < 0)
+ 		{
+ 			av_freep(&output);
+-			throwFFMPEGError(err, "swr_convert()");
++			return fail(converted, "swr_convert() output");
+ 		}
+ 
+ #ifdef DEBUG_AUDIOCONVERTER
+-		m_resamplerOutput.write((char*) output, avail * bytesPerFrame);
++		m_resamplerOutput.write((char*) output, converted * bytesPerFrame);
+ 		m_resamplerOutput.flush();
+ #endif
+ 
+-		m_audioFramePrebuf.push(output, avail * bytesPerFrame);
++		m_audioFramePrebuf.push(output, converted * bytesPerFrame);
+ 		av_freep(&output);
+ 	}
+ 
+-	av_init_packet(&m_avpktOut);
+-	m_avpktOut.data = 0;
+-	m_avpktOut.size = 0;
++	av_packet_unref(&m_avpktOut);
+ 	m_avpktOutUsed = 0;
+ 
+-	if (m_audioFramePrebuf.size() >= requiredBytes)
++	LOL_AC("feedEncoder prebuf=%zu required=%zu bpf=%zu\n", m_audioFramePrebuf.size(), requiredBytes, bytesPerFrame);
++
++	if (m_audioFramePrebuf.size() < requiredBytes)
++		return false;
++
++	err = avcodec_fill_audio_frame(m_audioFrame, m_destinationFormat.mChannelsPerFrame,
++			m_targetFormat, m_audioFramePrebuf.data(), requiredBytes, 0);
++
++	if (err < 0)
+ 	{
+-		try
+-		{
+-			err = avcodec_fill_audio_frame(m_audioFrame, m_destinationFormat.mChannelsPerFrame,
+-					m_targetFormat, m_audioFramePrebuf.data(), requiredBytes, 0);
+-			
+-			if (err < 0)
+-				throwFFMPEGError(err, "avcodec_fill_audio_frame()");
++		m_audioFramePrebuf.consume(requiredBytes);
++		return fail(err, "avcodec_fill_audio_frame()");
++	}
+ 
+-#if 0
+-			err = avcodec_encode_audio2(m_encoder, &m_avpktOut, m_audioFrame, &gotFrame);
+-			if (err < 0)
+-				throwFFMPEGError(err, "avcodec_encode_audio2()");
+-#else
+-			#warning TODO: test this new avcodec encoder code
+-			err = avcodec_send_frame(m_encoder, m_audioFrame);
++	err = avcodec_send_frame(m_encoder, m_audioFrame);
+ 
+-			if (err < 0) {
+-				if (err == AVERROR(EAGAIN)) {
+-					// we need to consume more packets before sending
+-					// TODO: handle this case properly.
+-					//       for now, we just proceed to throw an error to avoid dropping a frame
+-				}
+-				if (err < 0) {
+-					throwFFMPEGError(err, "avcodec_send_frame()");
+-				}
+-			}
++	/* The frame points straight into the prebuffer rather than owning its
++	   samples, so the encoder has taken its own copy by the time this returns
++	   and the storage can be reclaimed.  It has to be reclaimed on the way out
++	   as well, or a stalled encoder would be offered the same frame forever. */
++	m_audioFramePrebuf.consume(requiredBytes);
+ 
+-			err = avcodec_receive_packet(m_encoder, &m_avpkt);
++	if (err < 0 && err != AVERROR(EAGAIN))
++		return fail(err, "avcodec_send_frame()");
+ 
+-			if (err < 0) {
+-				gotFrame = false;
+-				if (err == AVERROR(EAGAIN)) {
+-					// we need to send more frames before consuming a packet
+-					err = 0;
+-				}
+-				if (err < 0) {
+-					throwFFMPEGError(err, "avcodec_receive_packet()");
+-				}
+-			} else {
+-				gotFrame = true;
+-			}
+-#endif
++	/* Received into the output packet.  Written into m_avpkt, as it used to be,
++	   it overwrote the input packet the decoder still holds the application's
++	   data in, and left the output packet empty - so fillComplex() never saw
++	   any output and kept asking for more input instead. */
++	err = avcodec_receive_packet(m_encoder, &m_avpktOut);
++
++	if (err < 0)
++	{
++		if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
++			return false;
+ 
+-			m_audioFramePrebuf.consume(requiredBytes);
++		return fail(err, "avcodec_receive_packet()");
++	}
+ 
+ #ifdef DEBUG_AUDIOCONVERTER
+-			if (gotFrame)
+-				m_encoderOutput.write((char*) m_avpktOut.data, m_avpktOut.size);
++	m_encoderOutput.write((char*) m_avpktOut.data, m_avpktOut.size);
+ #endif
+-		}
+-		catch (...)
+-		{
+-			m_audioFramePrebuf.consume(requiredBytes);
+-			throw;
+-		}
+ 
+-		return gotFrame;
+-	}
+-	return false;
++	LOL_AC("feedEncoder produced %d bytes\n", (int) m_avpktOut.size);
++
++	return true;
+ }
+ 
+ uint32_t AudioConverter::CAChannelCountToLayout(UInt32 numChannels)
+diff --git a/src/CoreAudio/AudioToolbox/AudioConverterImpl.h b/src/CoreAudio/AudioToolbox/AudioConverterImpl.h
+index cac058177..08c6525d5 100644
+--- a/src/CoreAudio/AudioToolbox/AudioConverterImpl.h
++++ b/src/CoreAudio/AudioToolbox/AudioConverterImpl.h
+@@ -17,6 +17,13 @@ public:
+ 	static OSStatus create(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, AudioConverter** out);
+ 	~AudioConverter();
+ 
++	/* Answers whether a reference is one this framework handed out and has not
++	   disposed of since.  An application passes the reference straight back,
++	   and nothing in it says whether it is still good: a converter that has
++	   already been disposed of, or a field that never held one, arrives as an
++	   ordinary pointer and used to be dereferenced where it stood. */
++	static bool isLive(const void* converter);
++
+ 	void flush();
+ 	UInt32 frameSize() const { return m_sourceFormat.mBytesPerFrame; }
+ 	
+@@ -34,10 +41,13 @@ private:
+ 	OSStatus feedInput(AudioConverterComplexInputDataProc dataProc, void* opaque, UInt32& numDataPackets);
+ 	
+ 	// Setups the resampler context based on the PCM format in the frame
+-	void setupResampler(const AVFrame* frame);
++	bool setupResampler(const AVFrame* frame);
+ 	
+-	void allocateBuffers();
+-	void initEncoder();
++	bool allocateBuffers();
++	bool initEncoder();
++
++	// Records an FFmpeg failure and puts the converter out of service
++	bool fail(int averr, const char* what);
+ 	
+ 	bool feedDecoder(AudioConverterComplexInputDataProc dataProc, void* opaque, AVFrame* srcaudio);
+ 	bool feedEncoder();
+@@ -56,6 +66,14 @@ private:
+ 	SwrContext* m_resampler = nullptr;
+ 	UInt32 m_outBitRate = 128000;
+ 	bool m_encoderInitialized = false;
++
++	/* FFmpeg failures used to be reported by throwing, which is no way to talk
++	   to a caller that was never compiled to expect an exception: the
++	   application decodes on whatever thread it likes - a Chromium GPU process
++	   worker, for one - and an exception leaving this class took the whole
++	   process down.  A converter that has failed cannot convert anything, so
++	   the failure is remembered and reported as an OSStatus instead. */
++	bool m_failed = false;
+ 	const AVCodec* m_codecIn = nullptr;
+ 	const AVCodec* m_codecOut = nullptr;
+ 
+diff --git a/src/CoreAudio/AudioToolbox/ConsumableBuffer.h b/src/CoreAudio/AudioToolbox/ConsumableBuffer.h
+index d9536228c..d797c9efa 100644
+--- a/src/CoreAudio/AudioToolbox/ConsumableBuffer.h
++++ b/src/CoreAudio/AudioToolbox/ConsumableBuffer.h
+@@ -30,6 +30,11 @@ public:
+ 	void push(const void* mem, size_t bytes)
+ 	{
+ 		const uint8_t* ptr = static_cast<const uint8_t*>(mem);
++
++		// Nothing to copy, and no pointer worth reading either way.
++		if (mem == nullptr || bytes == 0)
++			return;
++
+ 		m_data.insert(m_data.end(), ptr, ptr + bytes);
+ 	}
+ 	size_t size() const
+@@ -42,8 +47,11 @@ public:
+ 	}
+ 	void consume(size_t bytes)
+ 	{
++		/* Clamped rather than thrown over: this is reached from an audio
++		   callback on a thread of the application's choosing, where an
++		   exception has nobody to catch it. */
+ 		if (bytes > size())
+-			throw std::logic_error("ConsumableBuffer::consume() bytes > size()");
++			bytes = size();
+ 
+ 		std::memmove(m_data.data(), m_data.data() + bytes, m_data.size() - bytes);
+ 		m_data.resize(m_data.size() - bytes);
+diff --git a/src/CoreAudio/AudioToolbox/lolac.h b/src/CoreAudio/AudioToolbox/lolac.h
+new file mode 100644
+index 000000000..94a20ee91
+--- /dev/null
++++ b/src/CoreAudio/AudioToolbox/lolac.h
+@@ -0,0 +1,35 @@
++/* LOL_AC: temporary instrumentation, remove before committing.
++   Chromium's GPU process loses its stderr, and stdio in it has proved
++   unreliable, so this writes straight to a file on the host with write(2). */
++#ifndef LOLAC_H
++#define LOLAC_H
++#include <fcntl.h>
++#include <unistd.h>
++#include <stdio.h>
++#include <stdarg.h>
++#include <pthread.h>
++
++static inline void lolACLog(const char* fmt, ...)
++{
++	static int fd = -2;
++	char buf[1024];
++	int n;
++	va_list ap;
++
++	if (fd == -2)
++		fd = open("/Volumes/SystemRoot/tmp/claude-1000/-home-@GUEST_USER@-Projects-darling/114a73b8-df7c-475c-ac0d-f66ca2fb68dc/scratchpad/lolac.log",
++			O_WRONLY | O_CREAT | O_APPEND, 0666);
++	if (fd < 0)
++		return;
++
++	n = snprintf(buf, sizeof(buf), "[%d:%d] ", (int) getpid(), (int) pthread_mach_thread_np(pthread_self()));
++	va_start(ap, fmt);
++	n += vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
++	va_end(ap);
++	if (n > (int) sizeof(buf))
++		n = sizeof(buf);
++	write(fd, buf, n);
++}
++
++#define LOL_AC(...) lolACLog(__VA_ARGS__)
++#endif
+diff --git a/src/CoreAudio/CoreAudio/HostTime.mm b/src/CoreAudio/CoreAudio/HostTime.mm
+index fb99e99d1..b20a9fa51 100644
+--- a/src/CoreAudio/CoreAudio/HostTime.mm
++++ b/src/CoreAudio/CoreAudio/HostTime.mm
+@@ -1,10 +1,30 @@
+ #include "CoreAudio/HostTime.h"
+-#include "stub.h"
++
+ #include <mach/mach_time.h>
++#include <pthread.h>
++
++/* CoreAudio's "host time" is documented as being the same clock as
++   mach_absolute_time(), and real applications rely on that: they mix values
++   obtained here with AudioTimeStamp::mHostTime and with mach_absolute_time()
++   directly. So this is not a clock we are free to invent - it has to be that
++   one. */
++
++static mach_timebase_info_data_t gTimebase;
+ 
+-#ifdef __cplusplus
+-extern "C" {
+-#endif
++static void InitTimebase(void)
++{
++    if (mach_timebase_info(&gTimebase) != KERN_SUCCESS || gTimebase.denom == 0) {
++        gTimebase.numer = 1;
++        gTimebase.denom = 1;
++    }
++}
++
++static const mach_timebase_info_data_t &Timebase(void)
++{
++    static pthread_once_t once = PTHREAD_ONCE_INIT;
++    pthread_once(&once, InitTimebase);
++    return gTimebase;
++}
+ 
+ UInt64 AudioGetCurrentHostTime(void)
+ {
+@@ -13,20 +33,37 @@ UInt64 AudioGetCurrentHostTime(void)
+ 
+ UInt64 AudioConvertHostTimeToNanos(UInt64 inHostTime)
+ {
+-    static mach_timebase_info_data_t sTimebase = { 0, 0 };
+-    if (sTimebase.denom == 0)
+-        (void)mach_timebase_info(&sTimebase);
+-    return inHostTime * sTimebase.numer / sTimebase.denom;
++    const mach_timebase_info_data_t &tb = Timebase();
++
++    /* Split the multiply so that a host time far from zero - and it always is,
++       the clock counts from boot - does not overflow 64 bits on machines where
++       numer > denom. */
++    UInt64 whole = (inHostTime / tb.denom) * tb.numer;
++    UInt64 part = ((inHostTime % tb.denom) * tb.numer) / tb.denom;
++
++    return whole + part;
+ }
+ 
+ UInt64 AudioConvertNanosToHostTime(UInt64 inNanos)
+ {
+-    static mach_timebase_info_data_t sTimebase = { 0, 0 };
+-    if (sTimebase.denom == 0)
+-        (void)mach_timebase_info(&sTimebase);
+-    return inNanos * sTimebase.denom / sTimebase.numer;
++    const mach_timebase_info_data_t &tb = Timebase();
++
++    UInt64 whole = (inNanos / tb.numer) * tb.denom;
++    UInt64 part = ((inNanos % tb.numer) * tb.denom) / tb.numer;
++
++    return whole + part;
++}
++
++Float64 AudioGetHostClockFrequency(void)
++{
++    const mach_timebase_info_data_t &tb = Timebase();
++
++    // Ticks per second: 1e9 nanoseconds divided by the length of one tick.
++    return 1.0e9 * (Float64) tb.denom / (Float64) tb.numer;
+ }
+ 
+-#ifdef __cplusplus
++UInt32 AudioGetHostClockMinimumTimeDelta(void)
++{
++    // mach_absolute_time() advances one tick at a time.
++    return 1;
+ }
+-#endif
+diff --git a/src/CoreAudio/include/CoreAudio/HostTime.h b/src/CoreAudio/include/CoreAudio/HostTime.h
+index cbbd0a569..33db986ce 100644
+--- a/src/CoreAudio/include/CoreAudio/HostTime.h
++++ b/src/CoreAudio/include/CoreAudio/HostTime.h
+@@ -3,6 +3,14 @@
+ 
+ #include "MacTypes.h"
+ 
+-extern "C" UInt64 AudioGetCurrentHostTime(void);
++extern "C" {
++
++UInt64 AudioGetCurrentHostTime(void);
++UInt64 AudioConvertHostTimeToNanos(UInt64 inHostTime);
++UInt64 AudioConvertNanosToHostTime(UInt64 inNanos);
++Float64 AudioGetHostClockFrequency(void);
++UInt32 AudioGetHostClockMinimumTimeDelta(void);
++
++}
+ 
+ #endif // COREAUDIOHOSTTIME_H
+diff --git a/src/frameworks/Carbon/HIToolbox/CMakeLists.txt b/src/frameworks/Carbon/HIToolbox/CMakeLists.txt
+index 7d310f61c..d3134ed59 100644
+--- a/src/frameworks/Carbon/HIToolbox/CMakeLists.txt
++++ b/src/frameworks/Carbon/HIToolbox/CMakeLists.txt
+@@ -26,6 +26,7 @@ add_framework(HIToolbox
+ 		src/MacApplication.cpp
+ 		src/MacWindows.cpp
+ 		src/TextInputSources.mm
++		src/TextServices.c
+ 		src/IBCarbonRuntime.c
+ 		src/HITheme.c
+ 		src/constants.c
+diff --git a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/CarbonEventsCore.h b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/CarbonEventsCore.h
+index 039a6bb23..741757dc6 100644
+--- a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/CarbonEventsCore.h
++++ b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/CarbonEventsCore.h
+@@ -60,6 +60,16 @@ OSStatus RemoveEventHandler(EventHandlerRef a);
+ OSStatus SendEventToEventTarget(EventRef a, EventTargetRef b);
+ 
+ UInt32 GetCurrentKeyModifiers(void);
++
++/* Secure event input: on Mac OS X these take the keyboard away from every other
++   process while a password is being typed.  A program that has a password field
++   calls them around it and asks whether the mode is on; Chromium does on every
++   field it decides is a password, so a program that never gets an answer here
++   cannot show a sign-in form at all.  Enabling nests, so each enable is matched
++   by one disable. */
++OSStatus EnableSecureEventInput(void);
++OSStatus DisableSecureEventInput(void);
++Boolean IsSecureEventInputEnabled(void);
+ EventTime GetEventTime(EventRef inEvent);
+ 
+ #ifdef __cplusplus
+diff --git a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h
+index 4b42c9af8..98077dd63 100644
+--- a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h
++++ b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h
+@@ -2,6 +2,8 @@
+ #define _Carbon_TextInputSources_H_
+ #include <CoreFoundation/CFString.h>
+ #include <CoreFoundation/CFArray.h>
++#include <CoreFoundation/CFDictionary.h>
++#include <MacTypes.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -17,6 +19,8 @@ extern const CFStringRef kTISPropertyInputSourceType;
+ extern const CFStringRef kTISTypeKeyboardLayout;
+ extern const CFStringRef kTISPropertyInputSourceLanguages;
+ extern const CFStringRef kTISPropertyLocalizedName;
++extern const CFStringRef kTISPropertyInputSourceIsASCIICapable;
++extern const CFStringRef kTISPropertyInputSourceIsFromSystem;
+ 
+ typedef struct __TISInputSource* TISInputSourceRef;
+ 
+@@ -28,6 +32,13 @@ extern void* TISGetInputSourceProperty(TISInputSourceRef inputSourceRef, CFStrin
+ extern TISInputSourceRef TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void);
+ extern CFArrayRef TISCreateASCIICapableInputSourceList(void);
+ 
++/* The installed input sources, as an array of TISInputSourceRef.  A program that
++   wants to know which keyboards can type ASCII - Chromium asks as soon as a text
++   field takes focus - gets the answer from here, and an absent one takes the
++   whole process down at the first keystroke rather than returning an error. */
++extern CFArrayRef TISCreateASCIICapableInputSourceList(void);
++extern CFArrayRef TISCreateInputSourceList(CFDictionaryRef properties, Boolean includeAllInstalled);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h
+index 598ecaf95..790610174 100644
+--- a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h
++++ b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h
+@@ -1,5 +1,7 @@
+ #ifndef _Carbon_TextServices_H_
+ #define _Carbon_TextServices_H_
++#include <stdint.h>
++#include <MacTypes.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -15,6 +17,17 @@ OSErr NewTSMDocument(short a, InterfaceTypeList b, TSMDocumentID * c, long d);
+ 
+ OSErr UseInputWindow(TSMDocumentID a, Boolean b);
+ 
++/* The input sources a document will accept, which is what a password field
++   narrows.  See the note in TextServices.c on what that can and cannot mean
++   here. */
++enum {
++	kTSMDocumentEnabledInputSourcesPropertyTag = 'enis',
++};
++
++OSStatus TSMSetDocumentProperty(TSMDocumentID docID, OSType propertyTag, UInt32 propertySize, void* propertyData);
++OSStatus TSMGetDocumentProperty(TSMDocumentID docID, OSType propertyTag, UInt32 bufferSize, UInt32* actualSize, void* propertyBuffer);
++OSStatus TSMRemoveDocumentProperty(TSMDocumentID docID, OSType propertyTag);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/frameworks/Carbon/HIToolbox/src/CarbonEventsCore.c b/src/frameworks/Carbon/HIToolbox/src/CarbonEventsCore.c
+index 2bebb92ce..3f7b3bb51 100644
+--- a/src/frameworks/Carbon/HIToolbox/src/CarbonEventsCore.c
++++ b/src/frameworks/Carbon/HIToolbox/src/CarbonEventsCore.c
+@@ -117,3 +117,40 @@ EventTime GetEventTime(EventRef inEvent)
+     if (verbose) puts("STUB: GetEventTime called");
+     return (double) 0;
+ }
++
++/* How many times secure event input has been asked for and not yet given back.
++   The real calls nest, and a program that pushes a password field inside another
++   one relies on that, so the count is what decides when the mode is off again. */
++static _Atomic int secureEventInputCount = 0;
++
++/* There is no way to take the keyboard away from the rest of the system here:
++   nothing under this runtime can stop another client of the same X display from
++   reading key events, so this records that the mode was asked for and answers
++   questions about it truthfully, and the typing it is wrapped around is no more
++   private than any other.  Failing the call instead would not protect anything -
++   the caller carries on either way - and would only cost the sign-in form that
++   depends on it, so the request is accepted. */
++OSStatus EnableSecureEventInput(void)
++{
++	secureEventInputCount++;
++	return 0;
++}
++
++OSStatus DisableSecureEventInput(void)
++{
++	/* A disable that was never matched by an enable is the caller's mistake, and
++	   it must not drive the count negative - that would leave the mode reading as
++	   off while a later enable is still outstanding. */
++	int count = secureEventInputCount;
++
++	while (count > 0 && !__c11_atomic_compare_exchange_weak(&secureEventInputCount, &count, count - 1,
++	                                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
++		;
++
++	return 0;
++}
++
++Boolean IsSecureEventInputEnabled(void)
++{
++	return secureEventInputCount > 0;
++}
+diff --git a/src/frameworks/Carbon/HIToolbox/src/Events.cpp b/src/frameworks/Carbon/HIToolbox/src/Events.cpp
+index 98e29c97a..1a91e4c9c 100644
+--- a/src/frameworks/Carbon/HIToolbox/src/Events.cpp
++++ b/src/frameworks/Carbon/HIToolbox/src/Events.cpp
+@@ -5,9 +5,10 @@ UInt8 LMGetKbdType(void)
+ 	return 0;
+ }
+ 
++// KbdLast is the ADB address of the keyboard last used. Nothing here has an ADB
++// bus, and macOS reports 2 -- the address a lone keyboard is assigned -- on any
++// machine that never saw a second one, so answer that unconditionally.
+ UInt8 LMGetKbdLast(void)
+ {
+-	// Darling exposes one logical keyboard through its current XKB layout.
+-	// Its last-used keyboard type is therefore the current keyboard type.
+-	return LMGetKbdType();
++	return 2;
+ }
+diff --git a/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm b/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm
+index f73278a35..f772b24af 100644
+--- a/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm
++++ b/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm
+@@ -1,6 +1,9 @@
+ #include <HIToolbox/TextInputSources.h>
+ #include <CoreFoundation/CFDictionary.h>
+ #include <CoreFoundation/CFData.h>
++#include <CoreFoundation/CFArray.h>
++#include <CoreFoundation/CFNumber.h>
++#include <stdlib.h>
+ #include <os/lock.h>
+ #import <AppKit/NSDisplay.h>
+ 
+@@ -53,9 +56,34 @@ TISInputSourceRef TISCopyCurrentKeyboardLayoutInputSource(void)
+ 	NSString *name, *fullName;
+ 	[display keyboardLayoutName: &name fullName:&fullName];
+ 
+-	const void* keys[] = { kTISPropertyUnicodeKeyLayoutData, kTISPropertyLocalizedName, kTISPropertyInputSourceLanguages };
+-	const void* values[] = { data, fullName, @[name] };
+-	CFDictionaryRef dict = CFDictionaryCreate(NULL, keys, values, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++	/* A program looks an input source up by its properties before it uses one -
++	   asking for the keyboard layouts, or for the ones that can type ASCII - so
++	   the source has to describe itself with the keys those searches use, not
++	   only with the layout data.  There is one keyboard here, the one the X
++	   server reports, and it is the only thing any of these answers can mean. */
++	const void* keys[] = {
++		kTISPropertyUnicodeKeyLayoutData,
++		kTISPropertyLocalizedName,
++		kTISPropertyInputSourceLanguages,
++		kTISPropertyInputSourceID,
++		kTISPropertyInputSourceCategory,
++		kTISPropertyInputSourceType,
++		kTISPropertyInputSourceIsASCIICapable,
++		kTISPropertyInputSourceIsFromSystem,
++	};
++	const void* values[] = {
++		data,
++		fullName,
++		@[name],
++		name,
++		kTISCategoryKeyboardInputSource,
++		kTISTypeKeyboardLayout,
++		kCFBooleanTrue,
++		kCFBooleanTrue,
++	};
++	CFDictionaryRef dict = CFDictionaryCreate(NULL, keys, values,
++	                                          sizeof(keys) / sizeof(keys[0]),
++	                                          &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+ 
+ 	CFRelease(data);
+ 
+@@ -79,11 +107,92 @@ void* TISGetInputSourceProperty(TISInputSourceRef inputSourceRef, CFStringRef ke
+ 
+ TISInputSourceRef TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void)
+ {
+-    if (verbose) {
+-        puts("STUB: TISCopyCurrentASCIICapableKeyboardLayoutInputSource");
+-    }
++	/* There is one keyboard layout here and it is the one the X server reports.
++	   Answering NULL said instead that the user has no way to type ASCII at all,
++	   which is not true and which a caller is entitled to treat as fatal. */
++	return TISCopyCurrentKeyboardLayoutInputSource();
++}
++
++CFArrayRef TISCreateASCIICapableInputSourceList(void)
++{
++	TISInputSourceRef layout = TISCopyCurrentKeyboardLayoutInputSource();
++	CFArrayRef list;
++
++	if (layout == NULL)
++		return NULL;
++
++	list = CFArrayCreate(NULL, (const void**) &layout, 1, &kCFTypeArrayCallBacks);
++	CFRelease(layout);
++
++	return list;
++}
++
++/* Whether the one input source answers every property the caller asked for.  A
++   search that names a property this source does not carry is a search for
++   something else - a palette or a handwriting source, say - and must not come
++   back with the keyboard. */
++static Boolean inputSourceMatches(CFDictionaryRef source, CFDictionaryRef properties)
++{
++	CFIndex count = CFDictionaryGetCount(properties);
++	const void** keys;
++	const void** values;
++	Boolean matches = true;
++	CFIndex i;
++
++	if (count == 0)
++		return true;
++
++	keys = (const void**) malloc(sizeof(*keys) * count);
++	values = (const void**) malloc(sizeof(*values) * count);
++
++	if (keys == NULL || values == NULL)
++	{
++		free(keys);
++		free(values);
++		return false;
++	}
++
++	CFDictionaryGetKeysAndValues(properties, keys, values);
++
++	for (i = 0; i < count; i++)
++	{
++		const void* mine = CFDictionaryGetValue(source, keys[i]);
++
++		if (mine == NULL || !CFEqual(mine, values[i]))
++		{
++			matches = false;
++			break;
++		}
++	}
++
++	free(keys);
++	free(values);
++
++	return matches;
++}
++
++CFArrayRef TISCreateInputSourceList(CFDictionaryRef properties, Boolean includeAllInstalled)
++{
++	TISInputSourceRef layout = TISCopyCurrentKeyboardLayoutInputSource();
++	CFArrayRef list;
++
++	/* includeAllInstalled asks for sources that are installed but not enabled;
++	   nothing here is ever in that state, so the answer is the same either way. */
++	(void) includeAllInstalled;
++
++	if (layout == NULL)
++		return NULL;
++
++	if (properties != NULL && !inputSourceMatches((CFDictionaryRef) layout, properties))
++	{
++		CFRelease(layout);
++		return CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
++	}
++
++	list = CFArrayCreate(NULL, (const void**) &layout, 1, &kCFTypeArrayCallBacks);
++	CFRelease(layout);
+ 
+-    return NULL;
++	return list;
+ }
+ 
+ CFArrayRef TISCreateASCIICapableInputSourceList(void)
+diff --git a/src/frameworks/Carbon/HIToolbox/src/TextServices.c b/src/frameworks/Carbon/HIToolbox/src/TextServices.c
+new file mode 100644
+index 000000000..cd91c8ec5
+--- /dev/null
++++ b/src/frameworks/Carbon/HIToolbox/src/TextServices.c
+@@ -0,0 +1,126 @@
++#include <HIToolbox/TextServices.h>
++#include <CarbonCore/MacErrors.h>
++#include <CoreFoundation/CoreFoundation.h>
++#include <os/lock.h>
++#include <string.h>
++
++/* The Text Services Manager keeps a bag of properties per document.  Only one of
++   them is asked for here: a program that puts up a password field sets the list
++   of input sources the field will accept, so that a user cannot type into it
++   through an input method that could keep what was typed.  There is one keyboard
++   under this runtime and no input methods at all, so narrowing the list cannot
++   change what the user is able to type - but the calls must still work, because
++   a program that cannot make them has no way to show a password field. */
++
++static os_unfair_lock g_propertiesLock = OS_UNFAIR_LOCK_INIT;
++static CFMutableDictionaryRef g_properties = NULL;
++
++/* A property belongs to one document and one tag, and both are numbers, so the
++   pair is what identifies it. */
++static CFStringRef copyPropertyKey(TSMDocumentID docID, OSType propertyTag)
++{
++	return CFStringCreateWithFormat(NULL, NULL, CFSTR("%u.%u"),
++	                                (unsigned) docID, (unsigned) propertyTag);
++}
++
++OSStatus TSMSetDocumentProperty(TSMDocumentID docID, OSType propertyTag,
++                                UInt32 propertySize, void* propertyData)
++{
++	CFStringRef key;
++	CFDataRef value;
++
++	if (propertyData == NULL && propertySize != 0)
++		return paramErr;
++
++	key = copyPropertyKey(docID, propertyTag);
++	if (key == NULL)
++		return memFullErr;
++
++	value = CFDataCreate(NULL, (const UInt8*) propertyData, propertySize);
++	if (value == NULL)
++	{
++		CFRelease(key);
++		return memFullErr;
++	}
++
++	os_unfair_lock_lock(&g_propertiesLock);
++
++	if (g_properties == NULL)
++		g_properties = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
++		                                         &kCFTypeDictionaryValueCallBacks);
++
++	if (g_properties != NULL)
++		CFDictionarySetValue(g_properties, key, value);
++
++	os_unfair_lock_unlock(&g_propertiesLock);
++
++	CFRelease(value);
++	CFRelease(key);
++
++	return noErr;
++}
++
++OSStatus TSMGetDocumentProperty(TSMDocumentID docID, OSType propertyTag,
++                                UInt32 bufferSize, UInt32* actualSize, void* propertyBuffer)
++{
++	CFStringRef key;
++	CFDataRef value;
++	CFIndex length;
++
++	key = copyPropertyKey(docID, propertyTag);
++	if (key == NULL)
++		return memFullErr;
++
++	os_unfair_lock_lock(&g_propertiesLock);
++
++	value = (g_properties != NULL) ? CFDictionaryGetValue(g_properties, key) : NULL;
++
++	if (value == NULL)
++	{
++		os_unfair_lock_unlock(&g_propertiesLock);
++		CFRelease(key);
++		return paramErr;
++	}
++
++	length = CFDataGetLength(value);
++
++	if (actualSize != NULL)
++		*actualSize = (UInt32) length;
++
++	/* Asking with no buffer is how a caller finds out how much room it needs. */
++	if (propertyBuffer != NULL)
++	{
++		if ((CFIndex) bufferSize < length)
++		{
++			os_unfair_lock_unlock(&g_propertiesLock);
++			CFRelease(key);
++			return paramErr;
++		}
++
++		memcpy(propertyBuffer, CFDataGetBytePtr(value), length);
++	}
++
++	os_unfair_lock_unlock(&g_propertiesLock);
++	CFRelease(key);
++
++	return noErr;
++}
++
++OSStatus TSMRemoveDocumentProperty(TSMDocumentID docID, OSType propertyTag)
++{
++	CFStringRef key = copyPropertyKey(docID, propertyTag);
++
++	if (key == NULL)
++		return memFullErr;
++
++	os_unfair_lock_lock(&g_propertiesLock);
++
++	if (g_properties != NULL)
++		CFDictionaryRemoveValue(g_properties, key);
++
++	os_unfair_lock_unlock(&g_propertiesLock);
++
++	CFRelease(key);
++
++	return noErr;
++}
+diff --git a/src/frameworks/CoreLocation/include/CoreLocation/CoreLocation.h b/src/frameworks/CoreLocation/include/CoreLocation/CoreLocation.h
+index 1ca6c0473..256832739 100644
+--- a/src/frameworks/CoreLocation/include/CoreLocation/CoreLocation.h
++++ b/src/frameworks/CoreLocation/include/CoreLocation/CoreLocation.h
+@@ -30,6 +30,18 @@
+ #import <CoreLocation/CLSimulationLocationProtocol.h>
+ #import <CoreLocation/CLSimulationXPCServerInterface.h>
+ #import <CoreLocation/_CLLocationManagerRoutineProxy.h>
++
++typedef double CLLocationAccuracy;
++
++// Values for -[CLLocationManager setDesiredAccuracy:]. The positive ones are a
++// distance in metres; the two negative ones are sentinels asking for the best
++// the hardware can do, so they must stay distinct from any real distance.
++extern const CLLocationAccuracy kCLLocationAccuracyBestForNavigation;
++extern const CLLocationAccuracy kCLLocationAccuracyBest;
++extern const CLLocationAccuracy kCLLocationAccuracyNearestTenMeters;
++extern const CLLocationAccuracy kCLLocationAccuracyHundredMeters;
++extern const CLLocationAccuracy kCLLocationAccuracyKilometer;
++extern const CLLocationAccuracy kCLLocationAccuracyThreeKilometers;
+ #import <CoreLocation/CLLocationManagerRoutine.h>
+ #import <CoreLocation/CLEmergencyEnablementAssertion.h>
+ #import <CoreLocation/CLLocationManagerStateTracker.h>
+diff --git a/src/frameworks/CoreLocation/src/CoreLocation.m b/src/frameworks/CoreLocation/src/CoreLocation.m
+index 0d3e83f36..bd05aaa1b 100644
+--- a/src/frameworks/CoreLocation/src/CoreLocation.m
++++ b/src/frameworks/CoreLocation/src/CoreLocation.m
+@@ -22,6 +22,13 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ 
++const CLLocationAccuracy kCLLocationAccuracyBestForNavigation = -2.0;
++const CLLocationAccuracy kCLLocationAccuracyBest = -1.0;
++const CLLocationAccuracy kCLLocationAccuracyNearestTenMeters = 10.0;
++const CLLocationAccuracy kCLLocationAccuracyHundredMeters = 100.0;
++const CLLocationAccuracy kCLLocationAccuracyKilometer = 1000.0;
++const CLLocationAccuracy kCLLocationAccuracyThreeKilometers = 3000.0;
++
+ static int verbose = 0;
+ 
+ __attribute__((constructor))
+diff --git a/src/frameworks/CoreMedia/include/CoreMedia/CMSampleBuffer.h b/src/frameworks/CoreMedia/include/CoreMedia/CMSampleBuffer.h
+index 9ccdafef4..5e436ec29 100644
+--- a/src/frameworks/CoreMedia/include/CoreMedia/CMSampleBuffer.h
++++ b/src/frameworks/CoreMedia/include/CoreMedia/CMSampleBuffer.h
+@@ -23,5 +23,10 @@
+ #include <CoreFoundation/CoreFoundation.h>
+ 
+ extern const CFStringRef kCMSampleAttachmentKey_DisplayImmediately;
++extern const CFStringRef kCMSampleAttachmentKey_NotSync;
++
++// Set on a sample that no later sample refers to, so a reader can drop it
++// without having to decode the rest of the group to find out.
++extern const CFStringRef kCMSampleAttachmentKey_IsDependedOnByOthers;
+ 
+ #endif
+diff --git a/src/frameworks/CoreMedia/include/CoreMedia/CoreMedia.h b/src/frameworks/CoreMedia/include/CoreMedia/CoreMedia.h
+index 8ad9c4040..7fc3b1b88 100644
+--- a/src/frameworks/CoreMedia/include/CoreMedia/CoreMedia.h
++++ b/src/frameworks/CoreMedia/include/CoreMedia/CoreMedia.h
+@@ -23,6 +23,7 @@
+ 
+ #include <CoreMedia/CMTime.h>
+ #include <CoreMedia/CMSampleBuffer.h>
++#include <CoreMedia/CMFormatDescription.h>
+ 
+ void* AudioToolbox_AudioConverterDispose(void);
+ void* AudioToolbox_AudioConverterGetProperty(void);
+diff --git a/src/frameworks/CoreMedia/src/CoreMedia.c b/src/frameworks/CoreMedia/src/CoreMedia.c
+index 4a975959c..34c2c74d5 100644
+--- a/src/frameworks/CoreMedia/src/CoreMedia.c
++++ b/src/frameworks/CoreMedia/src/CoreMedia.c
+@@ -25,6 +25,26 @@
+ 
+ const CFStringRef kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms = CFSTR("SampleDescriptionExtensionAtoms");
+ const CFStringRef kCMSampleAttachmentKey_NotSync = CFSTR("NotSync");
++const CFStringRef kCMSampleAttachmentKey_IsDependedOnByOthers = CFSTR("IsDependedOnByOthers");
++
++const CFStringRef kCMFormatDescriptionExtension_FormatName = CFSTR("FormatName");
++const CFStringRef kCMFormatDescriptionExtension_Depth = CFSTR("Depth");
++const CFStringRef kCMFormatDescriptionExtension_FullRangeVideo = CFSTR("FullRangeVideo");
++const CFStringRef kCMFormatDescriptionExtension_MasteringDisplayColorVolume = CFSTR("MasteringDisplayColorVolume");
++const CFStringRef kCMFormatDescriptionExtension_ContentLightLevelInfo = CFSTR("ContentLightLevelInfo");
++
++const CFStringRef kCMFormatDescriptionColorPrimaries_ITU_R_2020 = CFSTR("ITU_R_2020");
++const CFStringRef kCMFormatDescriptionColorPrimaries_P3_D65 = CFSTR("P3_D65");
++const CFStringRef kCMFormatDescriptionColorPrimaries_DCI_P3 = CFSTR("DCI_P3");
++
++const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_2020 = CFSTR("ITU_R_2020");
++const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG = CFSTR("ITU_R_2100_HLG");
++const CFStringRef kCMFormatDescriptionTransferFunction_Linear = CFSTR("Linear");
++const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ = CFSTR("SMPTE_ST_2084_PQ");
++const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1 = CFSTR("SMPTE_ST_428_1");
++const CFStringRef kCMFormatDescriptionTransferFunction_sRGB = CFSTR("IEC_sRGB");
++
++const CFStringRef kCMFormatDescriptionYCbCrMatrix_ITU_R_2020 = CFSTR("ITU_R_2020");
+ 
+ const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_709_2 = CFSTR("ITU_R_709_2");
+ const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_240M_1995 = CFSTR("SMPTE_240M_1995");
+diff --git a/src/frameworks/CoreServices/CMakeLists.txt b/src/frameworks/CoreServices/CMakeLists.txt
+index aae2c7435..dcad8d976 100644
+--- a/src/frameworks/CoreServices/CMakeLists.txt
++++ b/src/frameworks/CoreServices/CMakeLists.txt
+@@ -53,6 +53,11 @@ add_framework(CoreServices
+ 		OSServices
+ 		system
+ 		CoreFoundation
++		# NSUserActivity lives in CoreServices on macOS and is only re-exported by
++		# Foundation, so binaries linked against both bind it to CoreServices.
++		# Darling implements the class in Foundation, so link it here and re-export
++		# the class symbols (see reexport.exp) to keep those bindings resolvable.
++		Foundation
+ 		${EXTRA_LIBS}
+ 
+ 	RESOURCES
+@@ -84,8 +89,21 @@ reexport(CoreServices SharedFileList ${SharedFileList_BUILD})
+ reexport(CoreServices OSServices ${OSServices_BUILD})
+ reexport(CoreServices Foundation ${CMAKE_BINARY_DIR}/src/external/foundation/Foundation)
+ 
+-set_property(TARGET CoreServices APPEND_STRING PROPERTY
+-  LINK_FLAGS " -Wl,-reexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/reexport.exp")
++# NSUserActivity is a CoreServices export on macOS that Foundation only re-exports,
++# so binaries linked against both bind it to CoreServices. Darling implements the
++# class in Foundation, so re-export it from here as well. The class symbol is named
++# differently by the two Objective-C ABIs, which means the re-export list has to be
++# per-architecture.
++file(READ ${CMAKE_CURRENT_SOURCE_DIR}/reexport.exp CoreServices_reexports)
++file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_64BIT}.exp
++	"${CoreServices_reexports}_OBJC_CLASS_$_NSUserActivity\n_OBJC_METACLASS_$_NSUserActivity\n")
++file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_32BIT}.exp
++	"${CoreServices_reexports}.objc_class_name_NSUserActivity\n")
++
++set_property(TARGET CoreServices APPEND_STRING PROPERTY LINK_FLAGS
++  " -Xarch_${APPLE_ARCH_64BIT} -Wl,-reexported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_64BIT}.exp")
++set_property(TARGET CoreServices APPEND_STRING PROPERTY LINK_FLAGS
++  " -Xarch_${APPLE_ARCH_32BIT} -Wl,-reexported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_32BIT}.exp")
+ 
+ install(FILES SystemVersion.plist DESTINATION "libexec/darling/System/Library/CoreServices")
+ install(FILES SystemVersionCompat.plist DESTINATION "libexec/darling/System/Library/CoreServices")
+\ No newline at end of file
+diff --git a/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m b/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m
+index 29eef9956..c21d1bb5c 100644
+--- a/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m
++++ b/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m
+@@ -333,3 +333,21 @@ CFStringRef LSCopyDefaultHandlerForURLScheme(CFStringRef inURLScheme)
+ 	puts("LSCopyDefaultHandlerForURLScheme STUB");
+ 	return NULL; // (could also return "" I guess)
+ }
++
++// There is no persistent LaunchServices database behind these yet, and the
++// matching LSCopy*Handler* getters above answer NULL, so claiming success here
++// would tell the caller we remembered something we did not.
++// kLSCannotSetInfoErr says exactly that, and callers already have to cope with
++// it: on a real system these fail for any bundle the user cannot register.
++
++OSStatus LSSetDefaultHandlerForURLScheme(CFStringRef inURLScheme, CFStringRef inHandlerBundleID)
++{
++	puts("LSSetDefaultHandlerForURLScheme STUB");
++	return kLSCannotSetInfoErr;
++}
++
++OSStatus LSSetDefaultRoleHandlerForContentType(CFStringRef inContentType, LSRolesMask inRole, CFStringRef inHandlerBundleID)
++{
++	puts("LSSetDefaultRoleHandlerForContentType STUB");
++	return kLSCannotSetInfoErr;
++}
+diff --git a/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h b/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h
+index 45ab80e75..cf434856a 100644
+--- a/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h
++++ b/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h
+@@ -46,5 +46,12 @@ extern CFStringRef const kCVImageBufferTransferFunction_SMPTE_240M_1995;
+ extern CFStringRef const kCVImageBufferTransferFunction_UseGamma;
+ extern const CFStringRef kCVImageBufferContentLightLevelInfoKey;
+ extern const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey;
++extern CFStringRef const kCVImageBufferTransferFunction_sRGB;
++
++// HDR metadata, attached to a buffer rather than passed in the creation
++// attributes: the values are CFData holding the mastering display and content
++// light level payloads defined by ISO/IEC 23008-2.
++extern CFStringRef const kCVImageBufferMasteringDisplayColorVolumeKey;
++extern CFStringRef const kCVImageBufferContentLightLevelInfoKey;
+ 
+ #endif // _COREVIDEO_CVIMAGEBUFFER_H_
+diff --git a/src/frameworks/CoreVideo/include/CoreVideo/CVPixelBufferPool.h b/src/frameworks/CoreVideo/include/CoreVideo/CVPixelBufferPool.h
+index bdff6028c..a0bffb1d8 100644
+--- a/src/frameworks/CoreVideo/include/CoreVideo/CVPixelBufferPool.h
++++ b/src/frameworks/CoreVideo/include/CoreVideo/CVPixelBufferPool.h
+@@ -29,6 +29,11 @@ extern const CFStringRef kCVPixelBufferPoolMaximumBufferAgeKey;
+ extern const CFStringRef kCVPixelBufferPoolAllocationThresholdKey;
+ extern const CFStringRef kCVPixelBufferPoolMinimumBufferCountKey;
+ 
++// Auxiliary attribute, passed to CVPixelBufferPoolCreatePixelBufferWithAuxAttributes
++// rather than stored on the pool: it caps how many buffers the pool will hand
++// out before it starts failing allocations instead of growing without bound.
++extern const CFStringRef kCVPixelBufferPoolAllocationThresholdKey;
++
+ __END_DECLS
+ 
+ #endif
+diff --git a/src/frameworks/CoreVideo/src/CVDisplayLink.mm b/src/frameworks/CoreVideo/src/CVDisplayLink.mm
+index c4cf2b2cf..8d212e3b5 100644
+--- a/src/frameworks/CoreVideo/src/CVDisplayLink.mm
++++ b/src/frameworks/CoreVideo/src/CVDisplayLink.mm
+@@ -649,9 +649,12 @@ static const NSString* kDirectDisplayArray = @"CGDirectDisplay";
+ #import <AppKit/NSApplication.h>
+ #import <AppKit/NSWindow.h>
+ #import <AppKit/NSScreen.h>
+-#import <Foundation/NSDictionary.h>
++#import <Foundation/NSArray.h>
++#import <Foundation/NSObject.h>
+ #include <CoreGraphics/CGWindow.h>
+ #include <CoreGraphics/CGDirectDisplay.h>
++#include <dispatch/dispatch.h>
++#include <mach/mach_time.h>
+ 
+ 
+ /* sturdy host-shared record, written fresh on every mutation. */
+@@ -886,9 +889,21 @@ CVReturn CVDisplayLinkCreateWithActiveCGDisplays(CVDisplayLinkRef* displayLinkOu
+ 	return kCVReturnSuccess;
+ }
+ 
+-CVReturn CVDisplayLinkStart(CVDisplayLinkRef displayLink)
++CVReturn CVDisplayLinkCreateWithOpenGLDisplayMask(
++    CGOpenGLDisplayMask mask,
++    CV_RETURNS_RETAINED_PARAMETER CVDisplayLinkRef CV_NULLABLE * CV_NONNULL displayLinkOut )
+ {
+-	if (!displayLink)
++	CGDirectDisplayID displayID = CGOpenGLDisplayMaskToDisplayID(mask);
++
++	if (displayID == kCGNullDirectDisplay)
++		return CVDisplayLinkCreateWithActiveCGDisplays(displayLinkOut);
++
++	return CVDisplayLinkCreateWithCGDisplay(displayID, displayLinkOut);
++}
++
++CVReturn CVDisplayLinkSetCurrentCGDisplay( CVDisplayLinkRef displayLink, CGDirectDisplayID displayID )
++{
++	if (!displayLink || displayID == kCGNullDirectDisplay)
+ 		return kCVReturnInvalidArgument;
+     CVStateGuard guard;
+ 
+@@ -1038,26 +1053,19 @@ CVReturn CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext(CVDisplayLinkRef disp
+ 			return kCVReturnSuccess;
+ 		}
+ 	}
+-	
++
+ 	return kCVReturnError;
+ }
+ 
+ CGDirectDisplayID CVDisplayLinkGetCurrentCGDisplay( CVDisplayLinkRef CV_NONNULL displayLink )
+ {
+ 	if (!displayLink)
+-		return kCVReturnInvalidArgument;
++		return kCGNullDirectDisplay;
+ 
+-	NSMutableDictionary* self = (NSMutableDictionary*) displayLink;
+-	NSArray* ids = self[kDirectDisplayArray];
+-
+-	if ([ids count] > 0)
+-		return (CGDirectDisplayID) [[ids firstObject] intValue];
+-	return kCGNullDirectDisplay;
++	return impl(displayLink)->_displayID;
+ }
+ 
+-CVReturn CVDisplayLinkCreateWithCGDisplay(
+-    CGDirectDisplayID displayID,
+-    CV_RETURNS_RETAINED_PARAMETER CVDisplayLinkRef CV_NULLABLE * CV_NONNULL displayLinkOut )
++CVReturn CVDisplayLinkSetOutputCallback(CVDisplayLinkRef displayLink, CVDisplayLinkOutputCallback callback, void *userInfo)
+ {
+ 	/* darling-lol M57: Chromium's NativeWidgetMacNSWindowHost aborts (and then
+ 	 * crashes on the null link) when this returns non-success; Darling's
+@@ -1087,25 +1095,132 @@ CVReturn CVDisplayLinkCreateWithCGDisplay(
+ 	return kCVReturnSuccess;
+ }
+ 
++CVReturn CVDisplayLinkSetOutputHandler( CVDisplayLinkRef CV_NONNULL displayLink, CVDisplayLinkOutputHandler CV_NONNULL handler )
++{
++	if (!displayLink)
++		return kCVReturnInvalidArgument;
++
++	CVDisplayLinkImpl* link = impl(displayLink);
++	CVDisplayLinkOutputHandler old = link->_handler;
++
++	link->_handler = handler ? [handler copy] : nil;
++
++	if (old)
++		[old release];
++
++	return kCVReturnSuccess;
++}
++
++CVReturn CVDisplayLinkStart(CVDisplayLinkRef displayLink)
++{
++	if (!displayLink)
++		return kCVReturnInvalidArgument;
++
++	[impl(displayLink) start];
++	return kCVReturnSuccess;
++}
++
++CVReturn CVDisplayLinkStop(CVDisplayLinkRef displayLink)
++{
++	if (!displayLink)
++		return kCVReturnInvalidArgument;
++
++	[impl(displayLink) stop];
++	return kCVReturnSuccess;
++}
++
++Boolean CVDisplayLinkIsRunning(CVDisplayLinkRef displayLink)
++{
++	if (!displayLink)
++		return false;
++
++	return impl(displayLink)->_running;
++}
++
+ CVTime CVDisplayLinkGetNominalOutputVideoRefreshPeriod( CVDisplayLinkRef CV_NONNULL displayLink )
+ {
+ 	CVTime time = { 0, 0, kCVTimeIsIndefinite };
+-	CGDirectDisplayID displayId = CVDisplayLinkGetCurrentCGDisplay(displayLink);
+-	if (displayId == kCGNullDirectDisplay)
+-		return time;
+ 
+-	CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayId);
+-	if (!mode)
++	if (!displayLink)
+ 		return time;
+ 
+-	double rate = CGDisplayModeGetRefreshRate(mode);
+-	if (rate < 1.0)
+-		rate = 60.0;
+-
+ 	time.flags = 0;
+-	time.timeValue = 1.0;
+-	time.timeScale = rate;
++	time.timeValue = [impl(displayLink) videoRefreshPeriod];
++	time.timeScale = kVideoTimeScale;
++	return time;
++}
+ 
+-	CGDisplayModeRelease(mode);
++CVTime CVDisplayLinkGetOutputVideoLatency( CVDisplayLinkRef CV_NONNULL displayLink )
++{
++	// Frames are handed to the X server immediately; there is no pipeline in
++	// front of the display whose depth we could report.
++	CVTime time = { 0, kVideoTimeScale, 0 };
+ 	return time;
+ }
++
++double CVDisplayLinkGetActualOutputVideoRefreshPeriod( CVDisplayLinkRef CV_NONNULL displayLink )
++{
++	if (!displayLink || !impl(displayLink)->_running)
++		return 0.0;
++
++	return 1.0 / refreshRateForDisplay(impl(displayLink)->_displayID);
++}
++
++CVReturn CVDisplayLinkGetCurrentTime( CVDisplayLinkRef CV_NONNULL displayLink, CVTimeStamp * CV_NONNULL outTime )
++{
++	if (!displayLink || !outTime)
++		return kCVReturnInvalidArgument;
++
++	[impl(displayLink) fillTimeStamp: outTime framesFromNow: 0];
++	return kCVReturnSuccess;
++}
++
++CVReturn CVDisplayLinkTranslateTime( CVDisplayLinkRef CV_NONNULL displayLink, const CVTimeStamp * CV_NONNULL inTime, CVTimeStamp * CV_NONNULL outTime )
++{
++	if (!displayLink || !inTime || !outTime)
++		return kCVReturnInvalidArgument;
++
++	CVDisplayLinkImpl* link = impl(displayLink);
++	int64_t period = [link videoRefreshPeriod];
++
++	CVTimeStamp reference;
++	[link fillTimeStamp: &reference framesFromNow: 0];
++
++	// Only one direction is ever asked for in practice: fill in whichever of
++	// the two clocks the caller left out, using "now" as the common point.
++	*outTime = *inTime;
++	outTime->videoTimeScale = kVideoTimeScale;
++	outTime->videoRefreshPeriod = period;
++	outTime->rateScalar = 1.0;
++
++	if ((inTime->flags & kCVTimeStampHostTimeValid) && !(inTime->flags & kCVTimeStampVideoTimeValid))
++	{
++		int64_t deltaNs = int64_t(hostTimeToNanoseconds(inTime->hostTime)) - int64_t(hostTimeToNanoseconds(reference.hostTime));
++		outTime->videoTime = reference.videoTime + deltaNs / (1000000000ll / kVideoTimeScale);
++	}
++	else if ((inTime->flags & kCVTimeStampVideoTimeValid) && !(inTime->flags & kCVTimeStampHostTimeValid))
++	{
++		int64_t deltaNs = (inTime->videoTime - reference.videoTime) * (1000000000ll / kVideoTimeScale);
++		outTime->hostTime = reference.hostTime + nanosecondsToHostTime(uint64_t(deltaNs));
++	}
++
++	outTime->flags = kCVTimeStampVideoTimeValid | kCVTimeStampHostTimeValid
++		| kCVTimeStampVideoRefreshPeriodValid | kCVTimeStampRateScalarValid;
++	return kCVReturnSuccess;
++}
++
++CVDisplayLinkRef CVDisplayLinkRetain( CVDisplayLinkRef CV_NULLABLE displayLink )
++{
++	if (!displayLink)
++		return NULL;
++
++	return (CVDisplayLinkRef) [impl(displayLink) retain];
++}
++
++void CVDisplayLinkRelease(CVDisplayLinkRef displayLink)
++{
++	if (!displayLink)
++		return;
++
++	[impl(displayLink) release];
++}
+diff --git a/src/frameworks/CoreVideo/src/constants.c b/src/frameworks/CoreVideo/src/constants.c
+index 5d4fd4b2d..afff54826 100644
+--- a/src/frameworks/CoreVideo/src/constants.c
++++ b/src/frameworks/CoreVideo/src/constants.c
+@@ -47,6 +47,10 @@ const CFStringRef kCVBufferPropagatedAttachmentsKey = CFSTR("CVBufferPropagatedA
+ const CFStringRef kCVImageBufferContentLightLevelInfoKey = CFSTR("ContentLightLevelInfo");
+ const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey = CFSTR("MasteringDisplayColorVolume");
+ const CFStringRef kCVPixelBufferPoolAllocationThresholdKey = CFSTR("AllocationThreshold");
++const CFStringRef kCVImageBufferTransferFunction_sRGB = CFSTR("IEC_sRGB");
++
++const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey = CFSTR("MasteringDisplayColorVolume");
++const CFStringRef kCVImageBufferContentLightLevelInfoKey = CFSTR("ContentLightLevelInfo");
+ 
+ const CFStringRef kCVPixelBufferIOSurfacePropertiesKey = CFSTR("IOSurfaceProperties");
+ const CFStringRef kCVPixelBufferOpenGLCompatibilityKey = CFSTR("OpenGLCompatibility");
+@@ -58,3 +62,4 @@ const CFStringRef kCVPixelBufferWidthKey = CFSTR("Width");
+ const CFStringRef kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey = CFSTR("IOSurfaceOpenGLTextureCompatibility");
+ const CFStringRef kCVPixelBufferPoolMaximumBufferAgeKey = CFSTR("MaximumBufferAge");
+ const CFStringRef kCVPixelBufferPoolMinimumBufferCountKey = CFSTR("MinimumBufferCount");
++const CFStringRef kCVPixelBufferPoolAllocationThresholdKey = CFSTR("AllocationThreshold");
+diff --git a/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h b/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h
+index cee46a8fc..7e3f0136d 100644
+--- a/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h
++++ b/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h
+@@ -48,6 +48,7 @@ extern IOSurfacePropertyKey IOSurfacePropertyKeyPixelSizeCastingAllowed;
+ - (kern_return_t)unlockWithOptions:(IOSurfaceLockOptions)options seed:(nullable uint32_t *)seed;
+ 
+ 
++@property (readonly) IOSurfaceID surfaceID;
+ @property (readonly) NSInteger allocationSize;
+ 
+ @property (readonly) NSInteger width;
+diff --git a/src/frameworks/IOSurface/src/IOSurfaceInternal.h b/src/frameworks/IOSurface/src/IOSurfaceInternal.h
+new file mode 100644
+index 000000000..75b0e8f97
+--- /dev/null
++++ b/src/frameworks/IOSurface/src/IOSurfaceInternal.h
+@@ -0,0 +1,36 @@
++/*
++ This file is part of Darling.
++
++ Copyright (C) 2020 Lubos Dolezel
++
++ Darling is free software: you can redistribute it and/or modify
++ it under the terms of the GNU General Public License as published by
++ the Free Software Foundation, either version 3 of the License, or
++ (at your option) any later version.
++
++ Darling is distributed in the hope that it will be useful,
++ but WITHOUT ANY WARRANTY; without even the implied warranty of
++ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ GNU General Public License for more details.
++
++ You should have received a copy of the GNU General Public License
++ along with Darling.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++// Shared between this framework's own .m files. It deliberately does not live
++// next to IOSurfacePriv.h: that header is also read by iokitd, which has a C++
++// class of its own called IOSurface and cannot see an Objective-C one.
++
++#ifndef IOSURFACE_INTERNAL_H
++#define IOSURFACE_INTERNAL_H
++#import <IOSurface/IOSurfaceObjC.h>
++
++@interface IOSurface (Darling)
++
++// The send right a surface is passed around by. See -[IOSurface createMachPort]
++// for what is actually on the other end of it.
++- (mach_port_t) createMachPort;
++
++@end
++
++#endif
+diff --git a/src/frameworks/IOSurface/src/IOSurfaceObjC.m b/src/frameworks/IOSurface/src/IOSurfaceObjC.m
+index 951810c92..7f4800ea1 100644
+--- a/src/frameworks/IOSurface/src/IOSurfaceObjC.m
++++ b/src/frameworks/IOSurface/src/IOSurfaceObjC.m
+@@ -22,6 +22,11 @@
+ #import <IOSurface/IOSurfacePriv.h>
+ #import <Foundation/Foundation.h>
+ #import <IOKit/IOCFSerialize.h>
++#import <IOKit/IOCFUnserialize.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <string.h>
+ #include <stdatomic.h>
+ #include <stdlib.h>
+ 
+@@ -112,6 +117,12 @@ static IOSurfaceID allocateSurfaceID(void)
+ 
+ - (nullable instancetype)initWithResponse:(const void*)bytes length:(size_t)length
+ {
++	if (length < sizeof(struct _IOSurfaceObjectRetval))
++	{
++		[self release];
++		return nil;
++	}
++
+ 	ImplData* idata = (ImplData*) malloc(sizeof(ImplData));
+ 	idata->surface = malloc(length);
+ 	memcpy(idata->surface, bytes, length);
+@@ -123,6 +134,36 @@ static IOSurfaceID allocateSurfaceID(void)
+ 	idata->attachments = [[NSMutableDictionary alloc] init];
+ 	self->_impl = idata;
+ 
++	// iokitd owns the storage but cannot map it for us, so the address in the
++	// response is ours to fill in.
++	char path[PATH_MAX];
++	_IOSurfaceBackingStorePath(idata->surface->surfaceID, path, sizeof(path));
++
++	int fd = open(path, O_RDWR);
++
++	if (fd < 0)
++	{
++		fprintf(stderr, "LOL_IOSURF open(%s) failed: %s\n", path, strerror(errno));
++		[self release];
++		return nil;
++	}
++
++	void* mapping = mmap(NULL, idata->surface->allocSize, PROT_READ | PROT_WRITE,
++			MAP_SHARED, fd, 0);
++
++	// The mapping keeps the storage alive on its own, and holding the
++	// descriptor open past this point only costs the process a slot.
++	close(fd);
++
++	if (mapping == MAP_FAILED)
++	{
++		fprintf(stderr, "LOL_IOSURF mmap(%llu) failed: %s\n", (unsigned long long) idata->surface->allocSize, strerror(errno));
++		[self release];
++		return nil;
++	}
++
++	idata->surface->address = (uint64_t) (uintptr_t) mapping;
++
+ 	return self;
+ }
+ 
+@@ -142,6 +183,7 @@ static IOSurfaceID allocateSurfaceID(void)
+ 	kern_return_t ret = IOConnectCallMethod(g_surfaceService, kIOSurfaceMethodCreate, NULL, 0, bytes, length, NULL, 0, responseBuffer, &responseLength);
+ 	CFRelease(data);
+ 
++
+ 	if (ret != kIOSurfaceSuccess)
+ 	{
+ 		/* darling-lol M57: Darling has no IOSurfaceRoot IOKit service, so the
+@@ -523,6 +565,16 @@ static IOSurfaceID allocateSurfaceID(void)
+ 	return data->surface->planes[planeIndex].bytesPerElement;
+ }
+ 
++- (IOSurfaceID) surfaceID
++{
++	return ((ImplData*) _impl)->surface->surfaceID;
++}
++
++- (NSInteger) allocationSize
++{
++	return ((ImplData*) _impl)->surface->allocSize;
++}
++
+ - (NSInteger)elementWidthOfPlaneAtIndex:(NSUInteger)planeIndex
+ {
+ 	return 1;
+@@ -825,6 +877,32 @@ IOSurfaceRef _IOSurfaceInitFromSharedMemfd(int fd)
+ 	return IOConnectCallMethod(g_surfaceService, kIOSurfaceMethodUnlock, NULL, 0, &args, sizeof(args), NULL, 0, NULL, 0);
+ }
+ 
++// Attachments live in iokitd with the rest of the surface - see
++// IOSurfaceRoot::setSurfaceValues(). IOKit's struct input is one flat buffer,
++// so the surface is named by a header and the values follow it serialized.
++- (kern_return_t) _sendValues: (CFTypeRef) payload forMethod: (uint32_t) selector
++{
++	ImplData* data = (ImplData*) _impl;
++	CFDataRef serialized = IOCFSerialize(payload, kIOCFSerializeToBinary);
++
++	if (!serialized)
++		return kIOReturnUnsupported;
++
++	CFIndex length = CFDataGetLength(serialized);
++	struct _IOSurfaceValueRequest* request = malloc(sizeof(*request) + length);
++
++	request->surfaceID = data->surface->surfaceID;
++	request->reserved = 0;
++	memcpy(request->payload, CFDataGetBytePtr(serialized), length);
++	CFRelease(serialized);
++
++	kern_return_t ret = IOConnectCallMethod(g_surfaceService, selector, NULL, 0,
++			request, sizeof(*request) + length, NULL, 0, NULL, 0);
++
++	free(request);
++	return ret;
++}
++
+ - (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector {
+     return [NSMethodSignature signatureWithObjCTypes: "v@:"];
+ }
+diff --git a/src/frameworks/IOSurface/src/api.m b/src/frameworks/IOSurface/src/api.m
+index e873bcda5..3c3ad5ba3 100644
+--- a/src/frameworks/IOSurface/src/api.m
++++ b/src/frameworks/IOSurface/src/api.m
+@@ -180,6 +180,76 @@ IOSurfaceRef _Nullable IOSurfaceCreate(CFDictionaryRef properties)
+ 	return (IOSurfaceRef) [[IOSurface alloc] initWithProperties: (NSDictionary*) properties];
+ }
+ 
++IOSurfaceRef _Nullable IOSurfaceLookup(IOSurfaceID csid)
++{
++	return (IOSurfaceRef) [[IOSurface alloc] initWithSurfaceID: csid];
++}
++
++IOSurfaceID IOSurfaceGetID(IOSurfaceRef buffer)
++{
++	return [(IOSurface*) buffer surfaceID];
++}
++
++size_t IOSurfaceGetAllocSize(IOSurfaceRef buffer)
++{
++	return [(IOSurface*) buffer allocationSize];
++}
++
++// What a surface's storage is rounded to. Callers size their own buffers with
++// these before handing the numbers back in the creation properties, so the
++// answers have to agree with what iokitd does when it lays a surface out.
++size_t IOSurfaceGetPropertyAlignment(CFStringRef property)
++{
++	if (CFEqual(property, kIOSurfaceBytesPerRow) ||
++		CFEqual(property, kIOSurfacePlaneBytesPerRow) ||
++		CFEqual(property, kIOSurfaceOffset) ||
++		CFEqual(property, kIOSurfacePlaneOffset) ||
++		CFEqual(property, kIOSurfacePlaneBase))
++	{
++		return 16;
++	}
++
++	if (CFEqual(property, kIOSurfaceAllocSize) ||
++		CFEqual(property, kIOSurfacePlaneSize))
++	{
++		return 4096;
++	}
++
++	return 1;
++}
++
++size_t IOSurfaceAlignProperty(CFStringRef property, size_t value)
++{
++	size_t alignment = IOSurfaceGetPropertyAlignment(property);
++
++	return (value + alignment - 1) & ~(alignment - 1);
++}
++
++size_t IOSurfaceGetPropertyMaximum(CFStringRef property)
++{
++	if (CFEqual(property, kIOSurfaceWidth) ||
++		CFEqual(property, kIOSurfaceHeight) ||
++		CFEqual(property, kIOSurfacePlaneWidth) ||
++		CFEqual(property, kIOSurfacePlaneHeight))
++	{
++		return 32768;
++	}
++
++	if (CFEqual(property, kIOSurfacePlaneInfo))
++	{
++		return 8;
++	}
++
++	// Anything else is limited by what can actually be allocated rather than by
++	// a rule of its own.
++	return 0;
++}
++
++mach_port_t IOSurfaceCreateMachPort(IOSurfaceRef buffer)
++{
++	return [(IOSurface*) buffer createMachPort];
++}
++
+ IOSurfaceRef _Nullable IOSurfaceLookupFromMachPort(mach_port_t port)
+ {
+ 	if (port == MACH_PORT_NULL)
+diff --git a/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h b/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h
+index 9e9f35386..dcf000bc6 100644
+--- a/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h
++++ b/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h
+@@ -26,6 +26,12 @@ extern const ICDownloadOption ICOverwrite;
+ extern const ICDownloadOption ICSaveAsFilename;
+ extern const ICDownloadOption ICSavedFilename;
+ extern const ICDownloadOption ICTransportTypeMassStorage;
++extern const ICDownloadOption ICSaveAsFilename;
++extern const ICDownloadOption ICSavedFilename;
++extern const ICDownloadOption ICSavedAncillaryFiles;
++extern const ICDownloadOption ICOverwrite;
++extern const ICDownloadOption ICDeleteAfterSuccessfulDownload;
++extern const ICDownloadOption ICDownloadSidecarFiles;
+ 
+ @interface ICCameraItem : NSObject
+ 
+diff --git a/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICDevice.h b/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICDevice.h
+index a3ef919c6..22a89fec8 100644
+--- a/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICDevice.h
++++ b/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICDevice.h
+@@ -19,6 +19,16 @@
+ 
+ #include <Foundation/Foundation.h>
+ 
++// Values for -[ICDevice transportType], naming the bus a camera or scanner is
++// attached by. No device is ever enumerated here, so nothing returns one of
++// these yet; they exist because they are plain data symbols and a client that
++// compares against one has to be able to bind it at load time.
++extern NSString *const ICTransportTypeUSB;
++extern NSString *const ICTransportTypeFireWire;
++extern NSString *const ICTransportTypeBluetooth;
++extern NSString *const ICTransportTypeTCPIP;
++extern NSString *const ICTransportTypeMassStorage;
++
+ @interface ICDevice : NSObject
+ 
+ @end
+diff --git a/src/frameworks/ImageCaptureCore/src/ICCameraItem.m b/src/frameworks/ImageCaptureCore/src/ICCameraItem.m
+index 0ca4ea610..88f0ff5bb 100644
+--- a/src/frameworks/ImageCaptureCore/src/ICCameraItem.m
++++ b/src/frameworks/ImageCaptureCore/src/ICCameraItem.m
+@@ -24,6 +24,12 @@ ICDownloadOption const ICOverwrite = @"ICOverwrite";
+ ICDownloadOption const ICSaveAsFilename = @"ICSaveAsFilename";
+ ICDownloadOption const ICSavedFilename = @"ICSavedFilename";
+ ICDownloadOption const ICTransportTypeMassStorage = @"MassStorage";
++ICDownloadOption const ICSaveAsFilename = @"ICSaveAsFilename";
++ICDownloadOption const ICSavedFilename = @"ICSavedFilename";
++ICDownloadOption const ICSavedAncillaryFiles = @"ICSavedAncillaryFiles";
++ICDownloadOption const ICOverwrite = @"ICOverwrite";
++ICDownloadOption const ICDeleteAfterSuccessfulDownload = @"ICDeleteAfterSuccessfulDownload";
++ICDownloadOption const ICDownloadSidecarFiles = @"ICDownloadSidecarFiles";
+ 
+ @implementation ICCameraItem
+ 
+diff --git a/src/frameworks/ImageCaptureCore/src/ICDevice.m b/src/frameworks/ImageCaptureCore/src/ICDevice.m
+index 0973658c4..d56a6f9c8 100644
+--- a/src/frameworks/ImageCaptureCore/src/ICDevice.m
++++ b/src/frameworks/ImageCaptureCore/src/ICDevice.m
+@@ -19,6 +19,12 @@
+ 
+ #import <ImageCaptureCore/ICDevice.h>
+ 
++NSString *const ICTransportTypeUSB = @"ICTransportTypeUSB";
++NSString *const ICTransportTypeFireWire = @"ICTransportTypeFireWire";
++NSString *const ICTransportTypeBluetooth = @"ICTransportTypeBluetooth";
++NSString *const ICTransportTypeTCPIP = @"ICTransportTypeTCPIP";
++NSString *const ICTransportTypeMassStorage = @"ICTransportTypeMassStorage";
++
+ @implementation ICDevice
+ 
+ - (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
+diff --git a/src/frameworks/MediaAccessibility/CMakeLists.txt b/src/frameworks/MediaAccessibility/CMakeLists.txt
+index 2edeaac81..c984a53a7 100644
+--- a/src/frameworks/MediaAccessibility/CMakeLists.txt
++++ b/src/frameworks/MediaAccessibility/CMakeLists.txt
+@@ -23,4 +23,5 @@ add_framework(MediaAccessibility
+     DEPENDENCIES
+         system
+         Foundation
++        CoreFoundation
+ )
+diff --git a/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h b/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h
+index 7916d13b1..aa9011b6a 100644
+--- a/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h
++++ b/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h
+@@ -21,6 +21,14 @@
+ #ifndef _MediaAccessibility_H_
+ #define _MediaAccessibility_H_
+ 
++#include <CoreFoundation/CoreFoundation.h>
++
++// Posted on the Darwin notification centre when the user changes any caption
++// appearance preference. Nothing posts it here yet, so a client that observes
++// it simply never hears from us - which is the truth, since the preferences
++// never change either.
++extern const CFStringRef kMACaptionAppearanceSettingsChangedNotification;
++
+ void* MAAudibleMediaCopyPreferredCharacteristics(void);
+ void* MAAudibleMediaPrefCopyPreferDescriptiveVideo(void);
+ void* MAAudibleMediaPrefResetAll(void);
+diff --git a/src/frameworks/MediaAccessibility/src/MediaAccessibility.c b/src/frameworks/MediaAccessibility/src/MediaAccessibility.c
+index 62cc3c784..e0b0cf4b5 100644
+--- a/src/frameworks/MediaAccessibility/src/MediaAccessibility.c
++++ b/src/frameworks/MediaAccessibility/src/MediaAccessibility.c
+@@ -23,6 +23,8 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ 
++const CFStringRef kMACaptionAppearanceSettingsChangedNotification = CFSTR("kMACaptionAppearanceSettingsChangedNotification");
++
+ static int verbose = 0;
+ 
+ const CFStringRef kMACaptionAppearanceSettingsChangedNotification = CFSTR("kMACaptionAppearanceSettingsChangedNotification");
+diff --git a/src/frameworks/OpenGL/CMakeLists.txt b/src/frameworks/OpenGL/CMakeLists.txt
+index d75d5e22d..ccb38125d 100644
+--- a/src/frameworks/OpenGL/CMakeLists.txt
++++ b/src/frameworks/OpenGL/CMakeLists.txt
+@@ -41,6 +41,11 @@ add_framework(OpenGL
+         IOSurface
+ )
+ 
++# Not linked (see the comment in OpenGL.c: linking them would publish the host's
++# egl*/X* entry points to everything that links OpenGL.framework), but they have
++# to exist before this framework is of any use.
++add_dependencies(OpenGL EGL X11)
++
+ set_property(TARGET OpenGL APPEND_STRING PROPERTY LINK_FLAGS
+     " -Wl,-reexport_library,${CMAKE_BINARY_DIR}/src/native/libGL.dylib \
+     -Wl,-reexport_library,${CMAKE_BINARY_DIR}/src/native/libGLU.dylib ")
+diff --git a/src/frameworks/OpenGL/OpenGL.c b/src/frameworks/OpenGL/OpenGL.c
+index a40a634d3..4874c9745 100644
+--- a/src/frameworks/OpenGL/OpenGL.c
++++ b/src/frameworks/OpenGL/OpenGL.c
+@@ -1,5 +1,7 @@
++#include <stdbool.h>
+ #include <stdlib.h>
+ #include <stdio.h>  // for fprintf(stderr, "unimplemented")
++#include <unistd.h>
+ 
+ #include <pthread.h>
+ #include <time.h>
+@@ -14,6 +16,7 @@ extern long __lolsys_syscall(long,long,long,long,long,long,int);
+ #include <OpenGL/OpenGL.h>
+ #include <OpenGL/glext.h>
+ #include <OpenGL/CGLInternal.h>
++#include <IOSurface/IOSurface.h>
+ #include <CoreFoundation/CFDictionary.h>
+ #include <IOSurface/IOSurface.h>
+ #include <pthread.h>
+@@ -107,6 +110,11 @@ static EGLint const attribute_list[] = {
+     EGL_RED_SIZE, 1,
+     EGL_GREEN_SIZE, 1,
+     EGL_BLUE_SIZE, 1,
++    /* We eglBindAPI(EGL_OPENGL_API) below, but EGL_RENDERABLE_TYPE defaults to
++       EGL_OPENGL_ES_BIT, so without this we would pick a config that cannot
++       back a desktop GL context at all. */
++    EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
++    EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+     EGL_NONE
+ };
+ 
+@@ -120,6 +128,9 @@ struct _CGLDisplay
+ static CFMutableDictionaryRef g_displays;
+ static pthread_mutex_t g_displaysMutex = PTHREAD_MUTEX_INITIALIZER;
+ 
++/* Defined further down, next to the rest of the IOSurface texture bookkeeping. */
++static void forgetSurfaceTexturesForContext(CGLContextObj context);
++
+ struct _CGLContextObj {
+     GLuint retain_count;
+     pthread_mutex_t lock;
+@@ -188,6 +199,14 @@ static void _CGLInitialize(void)
+     g_displays = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+ }
+ 
++/* LOL_CGL: temporary instrumentation - remove before committing. */
++static int lol_cgl(void) {
++    static int on = -1;
++    if (on < 0) on = getenv("LOL_CGL") != NULL;
++    return on;
++}
++#define CGLLOG(...) do { if (lol_cgl()) { fprintf(stderr, "LOL_CGL[%d]: ", getpid()); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); fflush(stderr); } } while (0)
++
+ static int attributes_count(const CGLPixelFormatAttribute *attrs) {
+     int result;
+     for (result = 0; attrs[result] != 0; result++) {
+@@ -203,7 +222,7 @@ CGLError CGLRegisterNativeDisplay(void *native_display) {
+     ensure_native_egl();
+     display = x11EGLDisplay(native_display);
+ 
+-    if (display == EGL_NO_DISPLAY) {
++    if (!loadNativeLibraries()) {
+         return kCGLBadConnection;
+     }
+ 
+@@ -299,10 +318,25 @@ CGLError CGLSetSurface(CGLContextObj gl, CGSConnectionID cid, CGSWindowID wid, C
+ 
+ CGLWindowRef CGLGetWindow(void *native_window) {
+ 
++    ensureDisplay();
++
+     EGLNativeWindowType window = (EGLNativeWindowType) native_window;
+     EGLSurface surface = p_eglCreateWindowSurface(display, config, window, NULL);
+ 
+     if (surface == EGL_NO_SURFACE) {
++        /* Silently returning NULL here is how a window ends up never being
++           presented: the caller attaches a NULL surface and every
++           eglSwapBuffers() is a no-op.  Say what went wrong. */
++        EGLint err = eglGetError();
++        EGLint visualID = 0;
++
++        eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &visualID);
++
++        fprintf(stderr, "CGLGetWindow: eglCreateWindowSurface failed (0x%x) for "
++                        "native window %p - the window's visual most likely does "
++                        "not match the EGLConfig (see CGLGetNativeVisualID); "
++                        "display=%p config=%p n=%d configVisual=0x%x\n",
++                err, native_window, display, config, num_config, visualID);
+         return NULL;
+     }
+ 
+@@ -429,6 +463,14 @@ CGLError CGLChoosePixelFormat(
+     CGLPixelFormatObj format = malloc(sizeof(struct _CGLPixelFormatObj));
+     int count = attributes_count(attrs);
+ 
++    if (lol_cgl()) {
++        char buf[512]; int o = 0;
++        for (int i = 0; attrs[i] != 0 && o < 400; i++)
++            o += snprintf(buf + o, sizeof(buf) - o, "%d ", (int) attrs[i]);
++        buf[o] = 0;
++        CGLLOG("CGLChoosePixelFormat attrs=[ %s]", buf);
++    }
++
+     format->retain_count = 1;
+     format->attributes = calloc(count + 1, sizeof(CGLPixelFormatAttribute));
+     for (int i = 0; i < count; i++) {
+@@ -520,6 +562,10 @@ static CGLError createContext(CGLPixelFormatObj pixelFormat, CGLContextObj share
+     if (!display || !config || !p_eglBindAPI || !p_eglBindAPI(EGL_OPENGL_API))
+         return kCGLBadConnection;
+ 
++    CGLLOG("CGLCreateContext(pf=%p share=%p) entering", pixelFormat, share);
++    ensureDisplay();
++    CGLLOG("CGLCreateContext: display=%p config=%p, calling eglCreateContext", display, config);
++
+     EGLContext egl_share = EGL_NO_CONTEXT;
+     EGLDisplay contextDisplay = share ? share->egl_display : display;
+     EGLConfig contextConfig = share ? share->egl_config : windowConfig ? windowConfig : config;
+@@ -549,6 +595,7 @@ static CGLError createContext(CGLPixelFormatObj pixelFormat, CGLContextObj share
+             (void*) display, (void*) config, (void*) egl_share, (void*) p_eglCreateContext);
+         return kCGLBadContext;
+     }
++    CGLLOG("CGLCreateContext -> %p", egl_context);
+ 
+     {
+         static int m58dg_ok = 0;
+diff --git a/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h b/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h
+index 5cdd9a89c..da0f70b6b 100644
+--- a/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h
++++ b/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h
+@@ -13,6 +13,13 @@ typedef void *CGLWindowRef;
+ 
+ CGL_EXPORT CGLError CGLRegisterNativeDisplay(void *native_display);
+ 
++/* The X server requires that a window's visual match the one the GL
++   implementation is going to draw into, otherwise eglCreateWindowSurface()
++   fails with EGL_BAD_MATCH and CGLGetWindow() returns NULL.  Callers that
++   create their own native window must therefore ask CGL which visual to use
++   *before* creating it.  Only meaningful after CGLRegisterNativeDisplay(). */
++CGL_EXPORT CGLError CGLGetNativeVisualID(uint32_t *outVisualID);
++
+ CGL_EXPORT CGLWindowRef CGLGetWindow(void *native_window);
+ // A surface with an alpha channel, for a window created with the given 32-bit visual.
+ CGL_EXPORT CGLWindowRef CGLGetWindowWithAlpha(void *native_window, unsigned long visual_id);
+diff --git a/src/frameworks/OpenGL/include/OpenGL/OpenGL.h b/src/frameworks/OpenGL/include/OpenGL/OpenGL.h
+index 7bb98bf4b..8307f2bf0 100644
+--- a/src/frameworks/OpenGL/include/OpenGL/OpenGL.h
++++ b/src/frameworks/OpenGL/include/OpenGL/OpenGL.h
+@@ -64,6 +64,12 @@ CGL_EXPORT CGLError CGLTexImageIOSurface2D(CGLContextObj context, GLenum target,
+  * must explicitly copy rendered texture pixels back to the surface. */
+ CGL_EXPORT CGLError CGLReadbackIOSurface(IOSurfaceRef ioSurface);
+ 
++CGL_EXPORT const char *CGLErrorString(CGLError error);
++CGL_EXPORT CGLError CGLUpdateContext(CGLContextObj context);
++CGL_EXPORT CGLError CGLSetVirtualScreen(CGLContextObj context, GLint screen);
++CGL_EXPORT CGLError CGLGetVirtualScreen(CGLContextObj context, GLint *screen);
++CGL_EXPORT CGLError CGLTexImageIOSurface2D(CGLContextObj context, GLenum target, GLenum internal_format, GLsizei width, GLsizei height, GLenum format, GLenum type, IOSurfaceRef ioSurface, GLuint plane);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/launchd/src/core.c b/src/launchd/src/core.c
+index 40c49e0b3..bae0ecbef 100644
+--- a/src/launchd/src/core.c
++++ b/src/launchd/src/core.c
+@@ -5035,8 +5035,21 @@ job_postfork_become_user(job_t j)
+ 
+ 	if (j->username) {
+ 		if ((pwe = job_getpwnam(j, j->username)) == NULL) {
++#ifdef DARLING
++			/*
++			 * A Darling prefix only knows about root and the single user who
++			 * owns it, so the system accounts that Apple's daemons ask for
++			 * (_trustd, _lp, ...) simply do not exist, and we could not switch
++			 * to them even if they did. There is no privilege separation to set
++			 * up inside a prefix, so keep the identity we already have rather
++			 * than refusing to run the job at all.
++			 */
++			job_log(j, LOG_WARNING, "getpwnam(\"%s\") failed; keeping the current user", j->username);
++			return;
++#else
+ 			job_log(j, LOG_ERR, "getpwnam(\"%s\") failed", j->username);
+ 			_exit(ESRCH);
++#endif
+ 		}
+ 	} else if (j->mach_uid) {
+ 		if ((pwe = getpwuid(j->mach_uid)) == NULL) {
+diff --git a/src/native/CMakeLists.txt b/src/native/CMakeLists.txt
+index 79e1197dd..871e578c9 100644
+--- a/src/native/CMakeLists.txt
++++ b/src/native/CMakeLists.txt
+@@ -16,6 +16,7 @@ if (COMPONENT_gui)
+ 	wrap_elf(Xext libXext.so)
+ 	wrap_elf(XRandR libXrandr.so)
+ 	wrap_elf(Xcursor libXcursor.so)
++	wrap_elf(Xss libXss.so)
+ 	wrap_elf(xkbfile libxkbfile.so)
+ 	wrap_elf(cairo libcairo.so)
+ 	wrap_elf(dbus libdbus-1.so)
+diff --git a/src/sandbox/sandbox.c b/src/sandbox/sandbox.c
+index 9afa967db..33c0d8826 100644
+--- a/src/sandbox/sandbox.c
++++ b/src/sandbox/sandbox.c
+@@ -4,10 +4,23 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <sys/types.h>
++#include <stdbool.h>
++#include <unistd.h>
++
++// Whether this process has "entered" a sandbox, i.e. whether one of the
++// sandbox_init*() calls below has been made. Nothing is actually enforced, but
++// sandbox_check() has to agree with them - see the comment there.
++static bool sandbox_applied = false;
+ 
+ // DUMMY implementation
+ const enum sandbox_filter_type SANDBOX_CHECK_NO_REPORT = SANDBOX_FILTER_NONE;
+ 
++// Darling has no sandbox, so every profile "applies" trivially. Note that the
++// contract for all three of these is that `*errorbuf' is only written on
++// failure, and is set to NULL on success: callers (Chromium's
++// SeatbeltExecServer::ApplySandboxProfile(), for one) test the error pointer
++// rather than the return value, so handing them a message alongside a success
++// return reads as a hard failure.
+ int sandbox_init(const char *profile, uint64_t flags, char **errorbuf)
+ {
+ 	/* darling-lol: no seatbelt enforcement exists, so init trivially
+@@ -87,6 +100,19 @@ int sandbox_check(pid_t pid, const char *operation, enum sandbox_filter_type typ
+ 		return 1;
+ 	}
+ 	(void)type;
++	// A NULL operation asks "is this process sandboxed?" rather than "is this
++	// particular operation allowed?", and the two answers are the opposite way
++	// round: non-zero means sandboxed, but for a real operation non-zero means
++	// denied.
++	//
++	// Darling enforces nothing, so no operation is ever denied. It does accept
++	// sandbox_init*() though, and a caller that just applied a profile expects
++	// to be told it is in a sandbox afterwards - Chromium's helper processes
++	// CHECK() exactly that, and abort on startup if we say no. We have no way
++	// to answer for another process, so report the truth only about ourselves.
++	if (operation == NULL)
++		return (pid == getpid() && sandbox_applied) ? 1 : 0;
++
+ 	return 0;
+ }
+ 

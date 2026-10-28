@@ -1,0 +1,254 @@
+diff --git a/src/common/filter.c b/src/common/filter.c
+index f324b41..d1aec7e 100644
+--- a/src/common/filter.c
++++ b/src/common/filter.c
+@@ -125,13 +125,18 @@ filter_unregister_all(struct kqueue *kq)
+         if (kq->kq_filt[i].kf_id == 0)
+             continue;
+ 
+-        /* Closing the queue owns teardown of every remaining registration,
+-         * including the native socket retained by a Mach-port knote. */
+-        struct knote *kn;
+-        while ((kn = RB_ROOT(&kq->kq_filt[i].kf_knote)) != NULL)
+-            knote_delete(&kq->kq_filt[i], kn);
+-
+-        if (kq->kq_filt[i].kf_destroy != NULL)
++        /* EVFILT_MACHPORT and EVFILT_PROC knotes each own a kqchan socket that
++           darlingserver keeps writing notifications into for as long as it
++           stays open, so forgetting one leaves a channel alive in both
++           processes with nobody left to read it.  Do this while the knotes can
++           still reach the kqueue's epoll set, which kqops.kqueue_free() closes
++           after us. */
++        if (!kqueue_in_atfork &&
++            (kq->kq_filt[i].kf_id == EVFILT_MACHPORT ||
++             kq->kq_filt[i].kf_id == EVFILT_PROC))
++            knote_free_all(&kq->kq_filt[i]);
++
++        if (kq->kq_filt[i].kf_destroy != NULL) 
+             kq->kq_filt[i].kf_destroy(&kq->kq_filt[i]);
+ 
+         if (kqops.filter_free != NULL)
+diff --git a/src/common/knote.c b/src/common/knote.c
+index d0141aa..6c481a0 100644
+--- a/src/common/knote.c
++++ b/src/common/knote.c
+@@ -159,6 +159,54 @@ knote_get_by_data(struct filter *filt, intptr_t data)
+ }
+ #endif
+ 
++/* LOL_KQFREE: temporary, revert before committing. */
++extern void __simple_fprintf(int fd, const char* fmt, ...);
++static int lol_kqfree(void) {
++    static int on = -1;
++    if (on < 0) on = getenv("DARLING_KQMP") ? 1 : 0;
++    return on;
++}
++#define LOL_KQFREE(fmt, ...) do { if (lol_kqfree()) \
++    __simple_fprintf(2, "LOL_KQFREE[%d] " fmt "\n", getpid(), __VA_ARGS__); } while (0)
++
++/* Closing a kqueue has to tear down the knotes it still holds.  A knote is not
++   just bookkeeping: EVFILT_MACHPORT and EVFILT_PROC each own a kqchan socket
++   that darlingserver keeps writing notifications into for as long as it stays
++   open, so a knote that is merely forgotten leaves a channel alive in both
++   processes with nobody left to read it. */
++void
++knote_free_all(struct filter *filt)
++{
++    struct knote *kn;
++
++    LOL_KQFREE("ENTER filt=%d%s", filt->kf_id, "");
++    for (;;) {
++        pthread_rwlock_wrlock(&filt->kf_knote_mtx);
++        kn = RB_MIN(knt, &filt->kf_knote);
++        if (kn != NULL)
++            RB_REMOVE(knt, &filt->kf_knote, kn);
++        pthread_rwlock_unlock(&filt->kf_knote_mtx);
++
++        if (kn == NULL) {
++            LOL_KQFREE("EXIT filt=%d%s", filt->kf_id, "");
++            break;
++        }
++
++        if (kn->kn_flags & KNFL_KNOTE_DELETED) {
++            LOL_KQFREE("filt=%d already-deleted kn=%p", filt->kf_id, kn);
++            continue;
++        }
++
++        LOL_KQFREE("filt=%d deleting kn=%p ident=%lu dupfd=%d epfd=%d",
++            filt->kf_id, kn, (unsigned long) kn->kev.ident,
++            kn->kdata.kn_dupfd, kn->kn_epollfd);
++        filt->kn_delete(filt, kn);
++        kn->kn_flags |= KNFL_KNOTE_DELETED;
++        knote_release(kn);
++        LOL_KQFREE("filt=%d deleted kn=%p%s", filt->kf_id, kn, "");
++    }
++}
++
+ int
+ knote_disable(struct filter *filt, struct knote *kn)
+ {
+diff --git a/src/common/kqueue.c b/src/common/kqueue.c
+index f05576d..610b573 100644
+--- a/src/common/kqueue.c
++++ b/src/common/kqueue.c
+@@ -134,10 +134,10 @@ static void kqueue_free_cb(int kqfd, void* kqptr, void* private) {
+ void
+ kqueue_free(struct kqueue *kq)
+ {
+-	kqueue_cleanup(kq);
+ 	// XXX: we should be doing this more efficiently (i.e. without walking through all open kqueues)
+ 	map_foreach(kqmap, kqueue_free_cb, kq);
+     filter_unregister_all(kq);
++    // after filter_unregister_all(), since the knotes it releases land on kq_tofree
+     kqueue_cleanup(kq);
+     kqops.kqueue_free(kq);
+     free(kq);
+@@ -298,6 +298,12 @@ kqueue_dup(int oldfd, int newfd)
+ #endif
+ }
+ 
++/* A fork child inherits its parent's kqueue file descriptors, including the
++   kqchan sockets that EVFILT_MACHPORT and EVFILT_PROC knotes hold.  Those
++   channels still belong to the parent, so the child drops its copies without
++   running the teardown that would tell darlingserver to dismantle them. */
++int kqueue_in_atfork = 0;
++
+ static void _kqueue_close_atfork_cb(int kqfd, void* kqptr, void* private)
+ {
+ 	struct kqueue* kq = (struct kqueue*) kqptr;
+@@ -314,7 +320,9 @@ void VISIBLE kqueue_atfork(void)
+     {
+         // Mutexes are not valid after a fork, reset it to unlocked state
+         pthread_mutex_init(&kq_mtx, NULL);
++        kqueue_in_atfork = 1;
+         map_foreach(kqmap, _kqueue_close_atfork_cb, NULL);
++        kqueue_in_atfork = 0;
+     }
+ }
+ 
+diff --git a/src/common/private.h b/src/common/private.h
+index e7a0841..acb946a 100644
+--- a/src/common/private.h
++++ b/src/common/private.h
+@@ -206,6 +206,8 @@ struct knote * knote_new(void);
+ void knote_release(struct knote *);
+ void knote_insert(struct filter *, struct knote *);
+ int  knote_delete(struct filter *, struct knote *);
++void knote_free_all(struct filter *);
++extern int kqueue_in_atfork;
+ int  knote_init(void);
+ int  knote_disable(struct filter *, struct knote *);
+ #define knote_get_filter(knt) &((knt)->kn_kq->kq_filt[(knt)->kev.filter])
+diff --git a/src/linux/machport.c b/src/linux/machport.c
+index 1e99023..3cd4f00 100644
+--- a/src/linux/machport.c
++++ b/src/linux/machport.c
+@@ -36,6 +36,14 @@
+ 
+ /* Keep the Mach-port path free of per-event diagnostic I/O. */
+ #define M58MP(...) do { } while (0)
++/* LOL_KQMP: temporary, revert before committing. */
++static int lol_kqmp(void) {
++    static int on = -1;
++    if (on < 0) on = getenv("DARLING_KQMP") ? 1 : 0;
++    return on;
++}
++#define LOL_KQMP(fmt, ...) do { if (lol_kqmp()) \
++    __simple_fprintf(2, "LOL_KQMP[%d/%d] %s: " fmt "\n", getpid(), THREAD_ID, __func__, __VA_ARGS__); } while (0)
+ 
+ int
+ evfilt_machport_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
+@@ -131,10 +139,12 @@ evfilt_machport_knote_create(struct filter *filt, struct knote *kn)
+ 	int status = _dserver_rpc_kqchan_mach_port_open_4libkqueue(port, (void*)kn->kev.ext[0], kn->kev.ext[1], kn->kev.fflags, &kn->kdata.kn_dupfd);
+ 	if (status < 0) {
+ 		M58MP("create open FAILED port=%d status=%d\n", port, status);
++		LOL_KQMP("create port=%d OPEN FAILED status=%d", port, status);
+ 		dbg_printf("evfilt_machport_open: %s", strerror(-status));
+ 		return (-1);
+ 	}
+ 	M58MP("create open port=%d fd=%d events=0x%x\n", port, kn->kdata.kn_dupfd, ev.events);
++	LOL_KQMP("create port=%d fd=%d epfd=%d flags=0x%x", port, kn->kdata.kn_dupfd, kn->kn_epollfd, (unsigned)kn->kev.flags);
+ 
+ 	dbg_printf("evfilt_machport_open: listening to FD %d for events %d", kn->kdata.kn_dupfd, ev.events);
+ 
+@@ -142,6 +152,7 @@ evfilt_machport_knote_create(struct filter *filt, struct knote *kn)
+ 
+     if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_ADD, kn->kdata.kn_dupfd, &ev) < 0) {
+         M58MP("create epoll_add FAILED epfd=%d fd=%d errno=%d\n", kn->kn_epollfd, kn->kdata.kn_dupfd, errno);
++        LOL_KQMP("create port=%d fd=%d epfd=%d EPOLL_ADD FAILED errno=%d", port, kn->kdata.kn_dupfd, kn->kn_epollfd, errno);
+         dbg_printf("epoll_ctl(2): %s", strerror(errno));
+         (void) __close_for_kqueue(kn->kdata.kn_dupfd);
+         kn->kdata.kn_dupfd = -1;
+@@ -159,6 +170,7 @@ evfilt_machport_knote_modify(struct filter *filt, struct knote *kn,
+ 	dserver_kqchan_reply_mach_port_modify_t reply = {0};
+ 	int rv;
+ 
++	LOL_KQMP("modify port=%d fd=%d flags=0x%x->0x%x", (int)kn->kev.ident, kn->kdata.kn_dupfd, (unsigned)kn->kev.flags, (unsigned)kev->flags);
+ 	call.header.number = dserver_kqchan_msgnum_mach_port_modify;
+ 	call.header.pid = getpid();
+ 	call.header.tid = THREAD_ID;
+@@ -195,11 +207,18 @@ evfilt_machport_knote_modify(struct filter *filt, struct knote *kn,
+ int
+ evfilt_machport_knote_delete(struct filter *filt, struct knote *kn)
+ {
++    LOL_KQMP("delete port=%d fd=%d epfd=%d flags=0x%x", (int)kn->kev.ident, kn->kdata.kn_dupfd, kn->kn_epollfd, (unsigned)kn->kev.flags);
++    if (kn->kdata.kn_dupfd < 0)
++        return 0;
++
++    /* The epoll_ctl() is allowed to fail -- the kqueue's epoll set may already
++       be gone, or the knote may have been dropped from it behind our back --
++       but the kqchan socket has to be closed either way, because the server
++       keeps notifying it for as long as it is open. */
+     if ((kn->kev.flags & EV_DISABLE) == 0) {
+         if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_DEL, kn->kdata.kn_dupfd, NULL) < 0) {
++            LOL_KQMP("delete port=%d fd=%d EPOLL_DEL FAILED errno=%d -- LEAKING FD", (int)kn->kev.ident, kn->kdata.kn_dupfd, errno);
+             dbg_perror("epoll_ctl(2)");
+-            /* Teardown must still close the channel if its epoll entry was
+-             * already removed. knote_delete frees the registration anyway. */
+         }
+     }
+ 
+@@ -220,9 +239,11 @@ evfilt_machport_knote_enable(struct filter *filt, struct knote *kn)
+ 	dbg_printf("enabling machport knote with ID=%llu for events %d", kn->kev.ident, ev.events);
+ 
+ 	if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_ADD, kn->kdata.kn_dupfd, &ev) < 0) {
++		LOL_KQMP("enable port=%d fd=%d EPOLL_ADD FAILED errno=%d", (int)kn->kev.ident, kn->kdata.kn_dupfd, errno);
+ 		dbg_perror("epoll_ctl(2)");
+ 		return (-1);
+ 	}
++	LOL_KQMP("enable port=%d fd=%d ok", (int)kn->kev.ident, kn->kdata.kn_dupfd);
+ 	return (0);
+ }
+ 
+@@ -230,7 +251,9 @@ int
+ evfilt_machport_knote_disable(struct filter *filt, struct knote *kn)
+ {
+ 	dbg_printf("disable machport knote with ID=%llu", kn->kev.ident);
++	LOL_KQMP("disable port=%d fd=%d flags=0x%x", (int)kn->kev.ident, kn->kdata.kn_dupfd, (unsigned)kn->kev.flags);
+ 	if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_DEL, kn->kdata.kn_dupfd, NULL) < 0) {
++		LOL_KQMP("disable port=%d fd=%d EPOLL_DEL FAILED errno=%d", (int)kn->kev.ident, kn->kdata.kn_dupfd, errno);
+ 		dbg_perror("epoll_ctl(2)");
+ 		return (-1);
+ 	}
+diff --git a/src/linux/proc.c b/src/linux/proc.c
+index 9a70d77..ff774ad 100644
+--- a/src/linux/proc.c
++++ b/src/linux/proc.c
+@@ -253,10 +253,16 @@ evfilt_proc_knote_modify(struct filter *filt, struct knote *kn,
+ int
+ evfilt_proc_knote_delete(struct filter *filt, struct knote *kn)
+ {
++    if (kn->kdata.kn_dupfd < 0)
++        return 0;
++
++    /* The epoll_ctl() is allowed to fail -- the kqueue's epoll set may already
++       be gone, or the knote may have been dropped from it behind our back --
++       but the kqchan socket has to be closed either way, because the server
++       keeps notifying it for as long as it is open. */
+     if ((kn->kev.flags & EV_DISABLE) == 0) {
+         if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_DEL, kn->kdata.kn_dupfd, NULL) < 0) {
+             dbg_perror("epoll_ctl(2)");
+-            /* Always release the channel during registration teardown. */
+         }
+     }
+ 

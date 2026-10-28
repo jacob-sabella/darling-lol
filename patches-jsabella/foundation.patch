@@ -1,0 +1,76 @@
+diff --git a/include/Foundation/NSArray.h b/include/Foundation/NSArray.h
+index 1dd8b4dd9..dedc9dc8e 100644
+--- a/include/Foundation/NSArray.h
++++ b/include/Foundation/NSArray.h
+@@ -9,7 +9,7 @@ typedef NS_OPTIONS(NSUInteger, NSBinarySearchingOptions) {
+     NSBinarySearchingInsertionIndex = (1UL << 10),
+ };
+ 
+-@class NSData, NSIndexSet, NSString, NSURL;
++@class NSData, NSError, NSIndexSet, NSString, NSURL;
+ 
+ @interface NSArray<__covariant ObjectType> : NSObject <NSCopying, NSMutableCopying, NSSecureCoding, NSFastEnumeration>
+ 
+@@ -45,6 +45,7 @@ typedef NS_OPTIONS(NSUInteger, NSBinarySearchingOptions) {
+ - (NSArray<ObjectType> *)subarrayWithRange:(NSRange)range;
+ - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+ - (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically;
++- (BOOL)writeToURL:(NSURL *)url error:(NSError **)error;
+ - (void)makeObjectsPerformSelector:(SEL)sel;
+ - (void)makeObjectsPerformSelector:(SEL)sel withObject:(id)aeg;
+ - (NSArray<ObjectType> *)objectsAtIndexes:(NSIndexSet *)indices;
+diff --git a/include/Foundation/NSDictionary.h b/include/Foundation/NSDictionary.h
+index 69e8bc5af..cd6ef2743 100644
+--- a/include/Foundation/NSDictionary.h
++++ b/include/Foundation/NSDictionary.h
+@@ -26,6 +26,7 @@
+ - (NSArray<ObjectType> *)objectsForKeys:(NSArray<KeyType> *)keys notFoundMarker:(id)marker;
+ - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)useAuxiliaryFile;
+ - (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically;
++- (BOOL)writeToURL:(NSURL *)url error:(NSError **)error;
+ - (NSArray<KeyType> *)keysSortedByValueUsingSelector:(SEL)comparator;
+ - (void)getObjects:(ObjectType __unsafe_unretained [])objects andKeys:(KeyType __unsafe_unretained [])keys;
+ - (ObjectType)objectForKeyedSubscript:(id)key;
+diff --git a/include/Foundation/NSProcessInfo.h b/include/Foundation/NSProcessInfo.h
+index f4d7b4d6d..32da9b11b 100644
+--- a/include/Foundation/NSProcessInfo.h
++++ b/include/Foundation/NSProcessInfo.h
+@@ -60,6 +60,21 @@ typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
+ 
+ @end
+ 
++typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
++    NSProcessInfoThermalStateNominal = 0,
++    NSProcessInfoThermalStateFair = 1,
++    NSProcessInfoThermalStateSerious = 2,
++    NSProcessInfoThermalStateCritical = 3,
++};
++
++// Posted when -thermalState changes. Nothing posts it here, which is consistent
++// with -thermalState never changing.
++FOUNDATION_EXPORT NSString *const NSProcessInfoThermalStateDidChangeNotification;
++
++@interface NSProcessInfo (NSProcessInfoThermal)
++@property (readonly) NSProcessInfoThermalState thermalState;
++@end
++
+ @interface NSProcessInfo (NSProcessInfoPlatform)
+ -(BOOL)isMacCatalystApp;
+ -(BOOL)isiOSAppOnMac;
+diff --git a/src/NSProcessInfo.m b/src/NSProcessInfo.m
+index 420955aa9..5d0e704e8 100644
+--- a/src/NSProcessInfo.m
++++ b/src/NSProcessInfo.m
+@@ -370,6 +370,12 @@ SINGLETON_RR()
+ 
+ @end
+ 
++NSString *const NSProcessInfoThermalStateDidChangeNotification = @"NSProcessInfoThermalStateDidChangeNotification";
++
++@implementation NSProcessInfo (NSProcessInfoThermal)
++
++@end
++
+ @implementation NSProcessInfo (NSProcessInfoPlatform)
+ -(BOOL)isMacCatalystApp {
+     return NO;

@@ -1,0 +1,88 @@
+diff --git a/src/mach.c b/src/mach.c
+index f8a439e..6b38e01 100644
+--- a/src/mach.c
++++ b/src/mach.c
+@@ -19,6 +19,14 @@
+  */
+ 
+ #include "internal.h"
++
++/* LOL_DM: temporary instrumentation - remove before commit */
++#define LOL_DM(...) do { \
++	fprintf(stderr, "LOL_DM[%d]: ", (int)_dispatch_tid_self()); \
++	fprintf(stderr, __VA_ARGS__); \
++	fprintf(stderr, "\n"); \
++	fflush(stderr); \
++} while (0)
+ #if HAVE_MACH
+ 
+ #define DISPATCH_MACH_RETURN_IMMEDIATE_SEND_RESULT 0x1
+@@ -809,8 +817,11 @@ retry:
+ 	_dispatch_debug_machport(reply_port);
+ 	_dispatch_debug("machport[0x%08x]: MACH_RCV_MSG %s", reply_port,
+ 			(options & MACH_RCV_TIMEOUT) ? "poll" : "wait");
++	LOL_DM("reply_recv: mach_msg rcv port=0x%x options=0x%x notify=0x%x",
++			reply_port, options, notify);
+ 	kr = mach_msg(hdr, options, 0, siz, reply_port, MACH_MSG_TIMEOUT_NONE,
+ 			notify);
++	LOL_DM("reply_recv: mach_msg returned 0x%x", kr);
+ 	hdr_copyout_addr = hdr;
+ 	_dispatch_debug_machport(reply_port);
+ 	_dispatch_debug("machport[0x%08x]: MACH_RCV_MSG (size %u, opts 0x%x) "
+@@ -1633,6 +1644,9 @@ _dispatch_mach_send_push_and_trydrain(dispatch_mach_t dm,
+ 		if ((old_state ^ new_state) & DISPATCH_MACH_STATE_ENQUEUED) {
+ 			wflags &= ~(dispatch_wakeup_flags_t)DISPATCH_WAKEUP_CONSUME_2;
+ 		}
++		LOL_DM("trydrain: deferred (disconnect_cnt=%u canceled=%d)",
++				dmsr->dmsr_disconnect_cnt,
++				!!(dm->dq_atomic_flags & DSF_CANCELED));
+ 		dx_wakeup(dm, qos, wflags);
+ 		return false;
+ 	}
+@@ -1657,7 +1671,11 @@ _dispatch_mach_send_push_and_trydrain(dispatch_mach_t dm,
+ 		os_atomic_rmw_loop2o(dmsr, dmsr_state, old_state, new_state, acquire, {
+ 			new_state = _dmsr_state_merge_override(old_state, qos);
+ 			if (new_state == old_state) {
+-				os_atomic_rmw_loop_give_up(return false);
++				os_atomic_rmw_loop_give_up({
++					LOL_DM("trydrain: deferred (no state change, state=0x%llx)",
++							(unsigned long long)old_state);
++					return false;
++				});
+ 			}
+ 			if (likely((old_state & canlock_mask) == 0)) {
+ 				new_state |= owner_self;
+@@ -1675,10 +1693,13 @@ _dispatch_mach_send_push_and_trydrain(dispatch_mach_t dm,
+ 					&dmsr->dmsr_state_lock.dul_lock);
+ 		}
+ 		if (wflags & DISPATCH_WAKEUP_CONSUME_2) _dispatch_release_2(dm);
++		LOL_DM("trydrain: deferred (send lock owned by 0x%x)", owner);
+ 		return false;
+ 	}
+ 
+ 	if (old_state & DISPATCH_MACH_STATE_PENDING_BARRIER) {
++		LOL_DM("trydrain: deferred (pending barrier, state=0x%llx)",
++				(unsigned long long)old_state);
+ 		dx_wakeup(dm, qos, wflags);
+ 		return false;
+ 	}
+@@ -1692,6 +1713,7 @@ _dispatch_mach_send_push_and_trydrain(dispatch_mach_t dm,
+ 		send_flags &= ~DM_SEND_INVOKE_IMMEDIATE_SEND_MASK;
+ 	}
+ 	if (wflags & DISPATCH_WAKEUP_CONSUME_2) _dispatch_release_2_no_dispose(dm);
++	LOL_DM("trydrain: draining inline");
+ 	return _dispatch_mach_send_drain(dm, DISPATCH_INVOKE_NONE, send_flags);
+ }
+ 
+@@ -1945,7 +1967,11 @@ _dispatch_mach_send_and_wait_for_reply(dispatch_mach_t dm,
+ 		.dc_priority = DISPATCH_NO_PRIORITY,
+ 		.dc_voucher = DISPATCH_NO_VOUCHER,
+ 	};
++	LOL_DM("send_and_wait: dm=%p label=%s reply_port=0x%x",
++			dm, dm->dq_label ? dm->dq_label : "<none>", reply_port);
+ 	*returned_send_result = _dispatch_mach_send_msg(dm, dmsg, &dc_wait,options);
++	LOL_DM("send_and_wait: send_msg returned %d",
++			(int)*returned_send_result);
+ 	if (dwr->dwr_refs.dmr_reply_port_owned) {
+ 		_dispatch_clear_thread_reply_port(reply_port);
+ 		// link special reply port to send right for remote receive right

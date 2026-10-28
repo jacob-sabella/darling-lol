@@ -1,0 +1,309 @@
+diff --git a/CFForwardingPrep.S b/CFForwardingPrep.S
+index a399c43..b47dc11 100644
+--- a/CFForwardingPrep.S
++++ b/CFForwardingPrep.S
+@@ -203,11 +203,9 @@ __CF_forwarding_prep_b:
+ 
+ .section __TEXT,__text,regular,pure_instructions
+ .globl __CF_forwarding_prep_0
+-.globl __CF_forwarding_prep_1
+ .align 4, 0x90
+ 
+ __CF_forwarding_prep_0:
+-__CF_forwarding_prep_1:
+     .cfi_startproc
+     .cfi_personality 155, ___objc_personality_v0
+     push %rbp
+@@ -283,6 +281,81 @@ Lfail:
+ 
+     .cfi_endproc
+ 
++.globl __CF_forwarding_prep_1
++.align 4, 0x90
++
++// The stret entry point cannot share the code above: here %rdi is the caller's
++// return buffer and self is in %rsi, so the saved registers have to be read one
++// slot further along, and the value the caller expects back in %rax is that
++// buffer rather than anything the forwarded call produced.
++__CF_forwarding_prep_1:
++    .cfi_startproc
++    .cfi_personality 155, ___objc_personality_v0
++    push %rbp
++    .cfi_def_cfa_offset 16
++    .cfi_offset %rbp, -16
++    movq %rsp, %rbp
++    .cfi_def_cfa_register rbp
++
++    // Copy args from regs into a stack var
++    subq   $0xd0, %rsp
++    movq   %rax, 0xb0(%rsp)
++    movapd %xmm7, 0xa0(%rsp)
++    movapd %xmm6, 0x90(%rsp)
++    movapd %xmm5, 0x80(%rsp)
++    movapd %xmm4, 0x70(%rsp)
++    movapd %xmm3, 0x60(%rsp)
++    movapd %xmm2, 0x50(%rsp)
++    movapd %xmm1, 0x40(%rsp)
++    movapd %xmm0, 0x30(%rsp)
++    movq   %r9, 0x28(%rsp)
++    movq   %r8, 0x20(%rsp)
++    movq   %rcx, 0x18(%rsp)
++    movq   %rdx, 0x10(%rsp)
++    movq   %rsi, 8(%rsp)
++    movq   %rdi, (%rsp)
++
++    movq   %rsp, %rdi        // the saved registers
++    movq   (%rsp), %rsi      // write the result straight into the caller's buffer
++    call   ____forwarding_stret___
++
++    cmpq   $0, %rax          // check for forwarding completion
++    jne    Lstret_fail
++
++    // Struct returns come back through the hidden pointer, which the caller
++    // also expects to find in %rax.
++    movq   (%rsp), %rax
++
++    movq   %rbp, %rsp
++    pop    %rbp
++    ret
++
++Lstret_fail:
++    // if we got a non-nil value, it's our forwarding target
++    movq   %rax, %rsi        // self, not the return buffer, is the one to replace
++    movq   0xb0(%rsp), %rax
++    movapd 0xa0(%rsp), %xmm7
++    movapd 0x90(%rsp), %xmm6
++    movapd 0x80(%rsp), %xmm5
++    movapd 0x70(%rsp), %xmm4
++    movapd 0x60(%rsp), %xmm3
++    movapd 0x50(%rsp), %xmm2
++    movapd 0x40(%rsp), %xmm1
++    movapd 0x30(%rsp), %xmm0
++    movq   0x28(%rsp), %r9
++    movq   0x20(%rsp), %r8
++    movq   0x18(%rsp), %rcx
++    movq   0x10(%rsp), %rdx
++    movq   (%rsp), %rdi
++    // 8(%rsp) (self) deliberately not restored
++
++    movq   %rbp, %rsp
++    pop    %rbp
++
++    jmp    _objc_msgSend_stret // restart message send
++
++    .cfi_endproc
++
+ .globl __CF_forwarding_prep_b
+ .align 4, 0x90
+ 
+diff --git a/NSArray.m b/NSArray.m
+index b389210..d64a050 100644
+--- a/NSArray.m
++++ b/NSArray.m
+@@ -9,6 +9,7 @@
+ 
+ #import <Foundation/NSData.h>
+ #import <Foundation/NSURL.h>
++#import <Foundation/NSError.h>
+ #import <Foundation/NSIndexSet.h>
+ 
+ #import <objc/message.h>
+@@ -361,16 +362,6 @@ CF_PRIVATE
+     [obj1 release];
+ }
+ 
+-- (void)removeAllObjects
+-{
+-    NSUInteger count = [self count];
+-    while (count > 0)
+-    {
+-        [self removeObjectAtIndex:count - 1];
+-        count--;
+-    }
+-}
+-
+ - (void)removeObject:(id)obj inRange:(NSRange)range
+ {
+     NSUInteger count = [self count];
+@@ -524,32 +515,6 @@ CF_PRIVATE
+     }
+ }
+ 
+-- (void)setArray:(NSArray *)other
+-{
+-    NSUInteger count = [other count];
+-    id objects[STACK_BUFFER_SIZE] = {0};
+-    id *objs = &objects[0];
+-    if (count > STACK_BUFFER_SIZE)
+-    {
+-        objs = malloc(sizeof(id) * count);
+-        if (objs == NULL)
+-        {
+-            CFStringRef reason = CFStringCreateWithFormat(kCFAllocatorDefault, NULL, CFSTR("unable to allocate space to store %d objects"), count);
+-            @throw [NSException exceptionWithName:NSMallocException reason:(NSString *)reason userInfo:nil];
+-            CFRelease(reason);
+-            return;
+-        }
+-    }
+-
+-    [other getObjects:objs range:NSMakeRange(0, count)];
+-    [self replaceObjectsInRange:NSMakeRange(0, [self count]) withObjects:objs count:count];
+-
+-    if (objs != objects)
+-    {
+-        free(objs);
+-    }
+-}
+-
+ - (void)sortUsingFunction:(NSInteger (*)(id, id, void *))compare context:(void *)context
+ {
+     [self sortWithOptions:0 usingComparator:^(id obj1, id obj2){
+@@ -1232,12 +1197,36 @@ SINGLETON_RR()
+     return success;
+ }
+ 
++/* The newer spelling of the two above, which reports why it failed instead of
++   just answering NO. It stays with XML for the same reason they do: the format
++   on disk is what other readers already expect to find there. */
+ - (BOOL)writeToURL:(NSURL *)url error:(NSError **)error
+ {
+-    BOOL success = [self writeToURL:url atomically:YES];
+-    if (!success && error != NULL) {
+-        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:nil];
++    if (error != NULL)
++    {
++        *error = nil;
+     }
++
++    CFErrorRef cfError = NULL;
++    NSData *data = (NSData *)CFPropertyListCreateData(kCFAllocatorDefault, (CFPropertyListRef)self, kCFPropertyListXMLFormat_v1_0, 0, &cfError);
++
++    if (data == nil)
++    {
++        // CFError and NSError are the same object, so this only has to be
++        // handed over with its reference intact - or dropped if unwanted.
++        if (error != NULL)
++        {
++            *error = [(NSError *)cfError autorelease];
++        }
++        else if (cfError != NULL)
++        {
++            CFRelease(cfError);
++        }
++        return NO;
++    }
++
++    BOOL success = [data writeToURL:url options:NSDataWritingAtomic error:error];
++    [data release];
+     return success;
+ }
+ 
+diff --git a/NSDictionary.m b/NSDictionary.m
+index 4678733..81f0671 100644
+--- a/NSDictionary.m
++++ b/NSDictionary.m
+@@ -12,6 +12,8 @@
+ #import <Foundation/NSArray.h>
+ #import <Foundation/NSSet.h>
+ #import <Foundation/NSURL.h>
++#import <Foundation/NSData.h>
++#import <Foundation/NSError.h>
+ #include <Foundation/NSError.h>
+ 
+ #import "CFInternal.h"
+@@ -941,11 +943,6 @@ static NSString *_getDescription(id obj, id locale, int level)
+     return YES;
+ }
+ 
+-- (NSEnumerator *)objectEnumerator
+-{
+-    return [[self allValues] objectEnumerator];
+-}
+-
+ - (NSArray *)objectsForKeys:(NSArray *)keys notFoundMarker:(id)marker
+ {
+     NSMutableArray *objects = [[NSMutableArray alloc] initWithCapacity:[keys count]];
+@@ -986,12 +983,36 @@ static NSString *_getDescription(id obj, id locale, int level)
+     return success;
+ }
+ 
++/* The newer spelling of the two above, which reports why it failed instead of
++   just answering NO. It stays with XML for the same reason they do: the format
++   on disk is what other readers already expect to find there. */
+ - (BOOL)writeToURL:(NSURL *)url error:(NSError **)error
+ {
+-    BOOL success = [self writeToURL:url atomically:YES];
+-    if (!success && error != NULL) {
+-        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:nil];
++    if (error != NULL)
++    {
++        *error = nil;
++    }
++
++    CFErrorRef cfError = NULL;
++    NSData *data = (NSData *)CFPropertyListCreateData(kCFAllocatorDefault, (CFPropertyListRef)self, kCFPropertyListXMLFormat_v1_0, 0, &cfError);
++
++    if (data == nil)
++    {
++        // CFError and NSError are the same object, so this only has to be
++        // handed over with its reference intact - or dropped if unwanted.
++        if (error != NULL)
++        {
++            *error = [(NSError *)cfError autorelease];
++        }
++        else if (cfError != NULL)
++        {
++            CFRelease(cfError);
++        }
++        return NO;
+     }
++
++    BOOL success = [data writeToURL:url options:NSDataWritingAtomic error:error];
++    [data release];
+     return success;
+ }
+ 
+diff --git a/NSForwarding.m b/NSForwarding.m
+index a18ac66..3356c6a 100644
+--- a/NSForwarding.m
++++ b/NSForwarding.m
+@@ -48,10 +48,17 @@ struct objc_sendv_margs {
+     uintptr_t stackArgs[];
+ };
+ 
+-id ___forwarding___(struct objc_sendv_margs *args, void *returnStorage)
++/* `argBase` is where self sits in the saved integer registers.  A call that
++   returns a large struct spends the first one (rdi) on the hidden pointer to
++   the caller's buffer, so everything after it is shifted along by one; reading
++   self from slot 0 there hands us the buffer and turns a plain "unrecognized
++   selector" into a crash inside the runtime.  NSMethodSignature already
++   accounts for the same shift when it lays out argument offsets. */
++static id forwarding_common(struct objc_sendv_margs *args, void *returnStorage,
++                            unsigned int argBase)
+ {
+-    id self = (id)args->a[0];
+-    SEL _cmd = (SEL)args->a[1];
++    id self = (id)args->a[argBase];
++    SEL _cmd = (SEL)args->a[argBase + 1];
+     Class class = object_getClass(self);
+ 
+     const char *className = class_getName(class);
+@@ -136,6 +143,18 @@ id ___forwarding___(struct objc_sendv_margs *args, void *returnStorage)
+     return nil;
+ }
+ 
++id ___forwarding___(struct objc_sendv_margs *args, void *returnStorage)
++{
++    return forwarding_common(args, returnStorage, 0);
++}
++
++#if defined(__x86_64__)
++id ___forwarding_stret___(struct objc_sendv_margs *args, void *returnStorage)
++{
++    return forwarding_common(args, returnStorage, 1);
++}
++#endif
++
+ void __block_forwarding__(void* frame) {
+     id block = *(id*)frame;
+     Class class = object_getClass(block);

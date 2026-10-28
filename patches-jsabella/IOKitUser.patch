@@ -1,0 +1,115 @@
+diff --git a/IOKitLib.c b/IOKitLib.c
+index 41271e8..bd33a60 100644
+--- a/IOKitLib.c
++++ b/IOKitLib.c
+@@ -819,15 +819,18 @@ IONotificationPortCreate(
+ 
+     notify = calloc( 1, sizeof( IONotificationPort));
+     if (!notify) {
++        fprintf(stderr, "LOL_NP: calloc failed\n"); fflush(stderr);
+         return( 0 );
+     }
+     notify->masterPort = masterPort;
+ 
+     kr = IOCreateReceivePort(kOSNotificationMessageID, &notify->wakePort);
+     if( kr != kIOReturnSuccess) {
++        fprintf(stderr, "LOL_NP: IOCreateReceivePort failed 0x%x\n", kr); fflush(stderr);
+         free( notify );
+         return( 0 );
+     }
++    fprintf(stderr, "LOL_NP: created notify=%p master=0x%x wake=0x%x\n", notify, masterPort, notify->wakePort); fflush(stderr);
+     
+     return notify;
+ }
+@@ -904,6 +907,7 @@ IONotificationPortGetRunLoopSource(
+ 
+     notify->cfmachPort = CFMachPortCreateWithPort(NULL, notify->wakePort,
+         IODispatchCalloutFromCFMessage, &context, &cfReusedPort);
++    fprintf(stderr, "LOL_RLS: CFMachPortCreateWithPort(wake=0x%x) -> %p reused=%d\n", notify->wakePort, notify->cfmachPort, (int)cfReusedPort); fflush(stderr);
+     if (!notify->cfmachPort)
+         return NULL;
+     
+@@ -934,6 +938,7 @@ IONotificationPortGetRunLoopSource(
+     }
+ 
+     notify->source = CFMachPortCreateRunLoopSource(NULL, notify->cfmachPort, 0);
++    fprintf(stderr, "LOL_RLS: CFMachPortCreateRunLoopSource -> %p\n", notify->source); fflush(stderr);
+ 
+ exit:
+     return (notify->source);
+@@ -1429,8 +1434,10 @@ IOServiceOpen(
+     kern_return_t	kr;
+     kern_return_t	result;
+ 
++    result = 0;
+     kr = io_service_open_extended( service,
+ 	owningTask, type, NDR_record, NULL, 0, &result, connect );
++    fprintf(stderr, "LOL_SO: io_service_open_extended svc=0x%x kr=0x%x result=0x%x connect=0x%x\n", service, kr, result, *connect); fflush(stderr);
+ 
+     if (KERN_SUCCESS == kr)
+         kr = result;
+diff --git a/ps.subproj/IOPowerSources.c b/ps.subproj/IOPowerSources.c
+index 277d607..6153f75 100644
+--- a/ps.subproj/IOPowerSources.c
++++ b/ps.subproj/IOPowerSources.c
+@@ -28,6 +28,7 @@
+ 
+ #include <sys/cdefs.h>
+ #include <notify.h>
++#include <stdio.h>
+ #include <mach/vm_map.h>
+ 
+ #include <CoreFoundation/CoreFoundation.h>
+@@ -447,6 +448,7 @@ static CFRunLoopSourceRef doCreatePSRLS(const char *notify_type, IOPowerSourceCa
+     int                             giveUpRetryCount = 5;
+ 
+     status = notify_register_mach_port(notify_type, &mp, 0, &token);
++    fprintf(stderr, "LOL_PS: notify_register_mach_port(%s) -> status=%d mp=0x%x\n", notify_type, status, mp); fflush(stderr);
+     if (NOTIFY_STATUS_OK != status) {
+         return NULL;
+     }
+@@ -480,6 +482,7 @@ static CFRunLoopSourceRef doCreatePSRLS(const char *notify_type, IOPowerSourceCa
+         CFRelease(mpRef);
+     }
+     
++    fprintf(stderr, "LOL_PS: doCreatePSRLS(%s) -> mpRef=%p reused=%d rls=%p\n", notify_type, mpRef, (int)isReused, mpRLS); fflush(stderr);
+     return mpRLS;
+ }
+ 
+diff --git a/pwr_mgt.subproj/IOPMLib.c b/pwr_mgt.subproj/IOPMLib.c
+index 0c1a742..b02f722 100644
+--- a/pwr_mgt.subproj/IOPMLib.c
++++ b/pwr_mgt.subproj/IOPMLib.c
+@@ -29,6 +29,7 @@
+ #include <IOKit/IOKitLib.h>
+ #include <IOKit/IOCFSerialize.h>
+ #include <IOKit/pwr_mgt/IOPM.h>
++#include <stdio.h>
+ #include "IOSystemConfiguration.h"
+ #include "IOPMLib.h"
+ 
+@@ -274,13 +275,16 @@ io_connect_t IORegisterForSystemPower ( void * refcon,
+     *root_notifier = IO_OBJECT_NULL;
+ 
+     notify = IONotificationPortCreate(MACH_PORT_NULL);
++    fprintf(stderr, "LOL_PM: IONotificationPortCreate -> %p\n", notify); fflush(stderr);
+ 
+     obj = IORegistryEntryFromPath( IO_OBJECT_NULL,
+                     kIOPowerPlane ":/IOPowerConnection/IOPMrootDomain");
++    fprintf(stderr, "LOL_PM: IORegistryEntryFromPath -> 0x%x\n", obj); fflush(stderr);
+ 
+     if( obj == IO_OBJECT_NULL) goto failure_exit;
+     
+     kr = IOServiceOpen( obj,mach_task_self(), 0, &fb);
++    fprintf(stderr, "LOL_PM: IOServiceOpen -> kr=0x%x fb=0x%x\n", kr, fb); fflush(stderr);
+ 
+     if ( (kr != kIOReturnSuccess) || (fb == IO_OBJECT_NULL) )  {
+         goto failure_exit;
+@@ -289,6 +293,7 @@ io_connect_t IORegisterForSystemPower ( void * refcon,
+     kr = IOServiceAddInterestNotification(
+                             notify,obj,kIOAppPowerStateInterest,
+                             callback,refcon,root_notifier);
++    fprintf(stderr, "LOL_PM: IOServiceAddInterestNotification -> kr=0x%x notifier=0x%x\n", kr, *root_notifier); fflush(stderr);
+ 
+     IOObjectRelease(obj);
+     if ( kr == KERN_SUCCESS ) {

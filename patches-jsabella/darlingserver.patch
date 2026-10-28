@@ -1,0 +1,1645 @@
+diff --git a/duct-tape/CMakeLists.txt b/duct-tape/CMakeLists.txt
+index cf4f1ba..bb6efd6 100644
+--- a/duct-tape/CMakeLists.txt
++++ b/duct-tape/CMakeLists.txt
+@@ -261,6 +261,7 @@ add_library(darlingserver_duct_tape STATIC
+ 	src/memory.c
+ 	src/task.c
+ 	src/thread.c
++	src/fileport.c
+ 	src/timer.c
+ 	src/traps.c
+ 	src/host.c
+diff --git a/duct-tape/include/darlingserver/duct-tape.h b/duct-tape/include/darlingserver/duct-tape.h
+index 607cf17..544b8da 100644
+--- a/duct-tape/include/darlingserver/duct-tape.h
++++ b/duct-tape/include/darlingserver/duct-tape.h
+@@ -28,6 +28,11 @@ uint32_t dtape_mach_reply_port(void);
+ uint32_t dtape_thread_get_special_reply_port(void);
+ uint32_t dtape_mk_timer_create(void);
+ 
++// Wraps a descriptor the server holds in a port the caller can send, and
++// unwraps one again. The descriptor handed back is the server's to dup out.
++uint32_t dtape_fileport_makeport(int fd);
++int dtape_fileport_makefd(uint32_t port_name);
++
+ DSERVER_DTAPE_DECLS;
+ 
+ typedef void (*dtape_kqchan_mach_port_notification_callback_f)(void* context);
+diff --git a/duct-tape/src/fileport.c b/duct-tape/src/fileport.c
+index 1741d59..3ad39a1 100644
+--- a/duct-tape/src/fileport.c
++++ b/duct-tape/src/fileport.c
+@@ -1,154 +1,84 @@
+-/*
+- * darling-lol M54: fileport support (fileport_makeport/fileport_makefd).
+- *
+- * Chromium's Mojo-on-Mac transports Unix FDs over Mach messages by wrapping
+- * them in fileports (mojo/core/channel_mac.cc, mojo/core/ipcz_driver/
+- * wrapped_platform_handle.cc). Without this, every FD-carrying Mojo message
+- * (e.g. NetworkService startup) dies in the old-LKM-API UD2 trap.
+- *
+- * A fileport is a Mach port whose kobject holds a host FD owned by
+- * darlingserver. The kobject rides the port across IPC transfer
+- * automatically, and ipc_kobject_destroy closes the FD when the port dies,
+- * so no transfer hooks or task-death cleanup are needed. fileport_makefd
+- * dups the held FD back to the caller (independent lifecycle, like XNU).
+- */
+-
+ #include <darlingserver/duct-tape.h>
++#include <darlingserver/duct-tape/stubs.h>
+ 
+-#include <kern/debug.h>
+-#include <stdlib.h>
+-#include <ipc/ipc_object.h>
++#include <kern/ipc_kobject.h>
++#include <kern/task.h>
+ #include <ipc/ipc_port.h>
+ #include <ipc/ipc_space.h>
+-#include <ipc/ipc_entry.h>
+-#include <kern/ipc_kobject.h>
+-#include <mach/mach_port.h>
+-#include <mach/message.h>
++#include <kern/ipc_misc.h>
+ 
+-/* duct-tape convention (see memory.c): declare libc bits manually rather
+- * than including host <unistd.h>, whose types collide with XNU headers. */
+-int close(int fd);
+-int dup(int fd);
++#include <stdlib.h>
+ 
+-#include <darlingserver/duct-tape/task.h>
+-#include <darlingserver/duct-tape/log.h>
++// The XNU headers here conflict with the host's, so the few libc functions this
++// needs are declared by hand, as elsewhere in the duct-tape.
++int close(int fd);
+ 
+-struct dtape_fileport {
++// XNU hands a fileport the shared state behind an open file - a "fileglob" -
++// and the port is just a way to pass that state between tasks. Here the shared
++// state is a descriptor the server is holding on the sender's behalf, so that
++// descriptor is all a fileglob needs to be.
++//
++// XNU declares the type but never defines it outside the BSD half, which is
++// exactly why the generic IPC code can carry it around, and why we are free to
++// say what it is.
++struct fileglob {
+ 	int fd;
+ };
+ 
+-int dtape_fileport_makeport(dtape_task_t* task, int fd, uint32_t* name_out)
+-{
+-	struct dtape_fileport* fp;
+-	ipc_port_t port;
+-	mach_port_name_t name;
+-
+-	if (task == NULL || fd < 0 || name_out == NULL) {
+-		return KERN_INVALID_ARGUMENT;
+-	}
+-	if (task->xnu_task.itk_space == IS_NULL) {
+-		return KERN_INVALID_TASK;
+-	}
+-
+-	fp = malloc(sizeof(*fp));
+-	if (fp == NULL) {
+-		dtape_log_error("fileport_makeport: malloc failed");
+-		return KERN_RESOURCE_SHORTAGE;
++// Called by fileport_notify() once the last send right is gone, so this is
++// where the descriptor the port stood for is finally given up.
++void fileport_releasefg(struct fileglob* fg) {
++	if (!fg) {
++		return;
+ 	}
+-	fp->fd = fd;
+ 
+-	/* Allocate a kernel-owned port holding the fd. As in XNU's
+-	 * fileport_alloc(), the port comes back with a send right. */
+-	port = ipc_kobject_alloc_port((ipc_kobject_t)fp, IKOT_FILEPORT,
+-	    IPC_KOBJECT_ALLOC_MAKE_SEND | IPC_KOBJECT_ALLOC_NSREQUEST);
+-	if (!IP_VALID(port)) {
+-		dtape_log_error("fileport_makeport: ipc_kobject_alloc_port failed fd=%d", fd);
+-		free(fp);
+-		return KERN_RESOURCE_SHORTAGE;
++	if (fg->fd >= 0) {
++		close(fg->fd);
+ 	}
+ 
+-	/* Install the send right into the task's space and get a name.
+-	 * ipc_port_copyout_send() is the XNU entry point for exactly this
+-	 * (see sys_fileport_makeport); it consumes the send right, so we
+-	 * must not release it afterwards. Do NOT go through
+-	 * mach_port_insert_right(): its MACH_MSG_TYPE_PORT_ANY_RIGHT() guard
+-	 * rejects MACH_MSG_TYPE_MAKE_SEND, which made every fileport fail
+-	 * with KERN_INVALID_VALUE and broke all FD-carrying Mojo messages. */
+-	name = ipc_port_copyout_send(port, task->xnu_task.itk_space);
+-	if (!MACH_PORT_VALID(name)) {
+-		dtape_log_error("fileport_makeport: ipc_port_copyout_send failed fd=%d", fd);
+-		/* port consumed by copyout; its kobject destroy closes fp->fd */
+-		return KERN_RESOURCE_SHORTAGE;
+-	}
++	free(fg);
++};
+ 
+-	*name_out = (uint32_t)name;
+-	return KERN_SUCCESS;
+-}
+-
+-int dtape_fileport_makefd(dtape_task_t* task, uint32_t uname, int* fd_out)
+-{
+-	ipc_object_t object = IO_NULL;
+-	mach_msg_type_name_t dtype = 0;
+-	mach_port_name_t name = (mach_port_name_t)uname;
+-	ipc_port_t port;
+-	struct dtape_fileport* fp;
+-	int fd;
++uint32_t dtape_fileport_makeport(int fd) {
++	struct fileglob* fg = NULL;
++	ipc_port_t port = IP_NULL;
+ 
+-	if (task == NULL || fd_out == NULL) {
+-		return KERN_INVALID_ARGUMENT;
+-	}
+-	if (task->xnu_task.itk_space == IS_NULL) {
+-		return KERN_INVALID_TASK;
++	if (fd < 0) {
++		return MACH_PORT_NULL;
+ 	}
+ 
+-	/* Copyin a send right: validates the name, checks aliveness, and
+-	 * enforces that the right is a send right (receive/dead names fail).
+-	 * Does not consume the caller's right. */
+-	if (ipc_object_copyin(task->xnu_task.itk_space, name,
+-	    MACH_MSG_TYPE_COPY_SEND, &object, 0, NULL,
+-	    IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND) != KERN_SUCCESS) {
+-		return KERN_INVALID_RIGHT;
++	fg = malloc(sizeof(*fg));
++	if (!fg) {
++		return MACH_PORT_NULL;
+ 	}
+-	dtype = ipc_object_copyin_type(MACH_MSG_TYPE_COPY_SEND);
+ 
+-	port = ip_object_to_port(object);
+-	if (!IP_VALID(port) || ip_kotype(port) != IKOT_FILEPORT) {
+-		ipc_object_destroy(object, dtype);
+-		return KERN_INVALID_RIGHT;
+-	}
+-	fp = (struct dtape_fileport*)ip_get_kobject(port);
+-	if (fp == NULL || fp->fd < 0) {
+-		ipc_object_destroy(object, dtype);
+-		return KERN_INVALID_RIGHT;
+-	}
++	fg->fd = fd;
+ 
+-	/* Independent lifecycle: the receiver owns the dup, the kobject
+-	 * keeps its own. */
+-	fd = dup(fp->fd);
+-	ipc_object_destroy(object, dtype);
+-	if (fd < 0) {
+-		return KERN_RESOURCE_SHORTAGE;
++	// The port comes back holding one send right and a no-senders request, so
++	// it tears itself down (through fileport_releasefg) once every task that
++	// received it has let go.
++	port = fileport_alloc(fg);
++	if (!IP_VALID(port)) {
++		free(fg);
++		return MACH_PORT_NULL;
+ 	}
+ 
+-	*fd_out = fd;
+-	return KERN_SUCCESS;
+-}
++	// Hand that send right to the caller. It is theirs to deallocate.
++	return ipc_port_copyout_send(port, current_space());
++};
++
++static int dtape_fileport_describe(mach_port_name_t name, struct fileglob* fg, void* arg) {
++	*(int*)arg = fg->fd;
++	return 0;
++};
+ 
+-void dtape_fileport_destroy(ipc_port_t port)
+-{
+-	struct dtape_fileport* fp;
++int dtape_fileport_makefd(uint32_t port_name) {
++	int fd = -1;
++	int rval = 0;
+ 
+-	if (!IP_VALID(port)) {
+-		return;
+-	}
+-	fp = (struct dtape_fileport*)ip_get_kobject(port);
+-	if (fp == NULL) {
+-		return;
+-	}
+-	/* Port is dead; just release our resources like
+-	 * mach_destroy_memory_entry does. */
+-	if (fp->fd >= 0) {
+-		close(fp->fd);
++	if (fileport_invoke(current_task(), port_name, dtape_fileport_describe, &fd, &rval) != KERN_SUCCESS) {
++		return -1;
+ 	}
+-	free(fp);
+-}
++
++	return fd;
++};
+diff --git a/duct-tape/src/memory.c b/duct-tape/src/memory.c
+index 20cd162..e5c9721 100644
+--- a/duct-tape/src/memory.c
++++ b/duct-tape/src/memory.c
+@@ -11,8 +11,9 @@
+ 
+ #include <stdlib.h>
+ 
+-
+ #include <mach_debug/mach_debug.h>
++#include <mach/memory_object_types.h>
++#include <kern/ipc_kobject.h>
+ 
+ struct zone {
+ 	const char* name;
+@@ -24,8 +25,16 @@ struct kalloc_heap KHEAP_DEFAULT[1];
+ // stub
+ struct kalloc_heap KHEAP_DATA_BUFFERS[1];
+ 
+-// stub
+-vm_size_t kalloc_max_prerounded = 0;
++// We have no kalloc zones, so this is only ever read by ipc_init(), which derives
++// msg_ool_size_small from it. Leaving it at 0 makes msg_ool_size_small 0, and then
++// ipc_kmsg_copyin_body() treats even a zero-length physical-copy OOL descriptor as
++// "large": it adds round_page(0) to the kernel space it needs, sees the total has
++// not grown, decides that addition overflowed and fails the whole send with
++// MACH_MSG_VM_KERNEL. Zero-length OOL descriptors are perfectly legal - MIG emits
++// one for every unused variable-size argument, e.g. the properties argument of
++// io_service_open_extended() - so use the same value XNU ends up with on a 4K-page
++// machine.
++vm_size_t kalloc_max_prerounded = 2 * 4096;
+ 
+ void* calloc(size_t count, size_t size);
+ void* aligned_alloc(size_t alignment, size_t size);
+@@ -53,26 +62,6 @@ int ftruncate(int fd, off_t length);
+ 
+ #define MFD_CLOEXEC 0x1
+ 
+-/* darling-lol diagnostics: why shared-memory creation fails. */
+-int* __errno_location(void);
+-struct dtape_diag_rlimit { unsigned long cur, max; };
+-int prlimit(int pid, int resource, const struct dtape_diag_rlimit* new_limit, struct dtape_diag_rlimit* old_limit);
+-#define DTAPE_DIAG_RLIMIT_NOFILE 7
+-
+-static long dtape_diag_live_descriptors;
+-static unsigned long dtape_diag_created_descriptors;
+-
+-static void dtape_diag_log_shortage(const char* what, int fd, uint64_t size) {
+-	int err = *__errno_location();
+-	struct dtape_diag_rlimit limit = {0, 0};
+-	prlimit(0, DTAPE_DIAG_RLIMIT_NOFILE, NULL, &limit);
+-	dtape_log_error("MEMDIAG %s failed errno=%d size=%#llx fd=%d live=%ld created=%lu nofile=%lu/%lu",
+-	    what, err, (unsigned long long)size, fd,
+-	    __atomic_load_n(&dtape_diag_live_descriptors, __ATOMIC_RELAXED),
+-	    __atomic_load_n(&dtape_diag_created_descriptors, __ATOMIC_RELAXED),
+-	    limit.cur, limit.max);
+-}
+-
+ void dtape_memory_init(void) {
+ 
+ };
+@@ -128,12 +117,6 @@ static dtape_map_shared_descriptor_t* dtape_map_shared_descriptor_create(int mem
+ 	desc->memfd = memfd;
+ 	desc->size = size;
+ 
+-	long live = __atomic_add_fetch(&dtape_diag_live_descriptors, 1, __ATOMIC_RELAXED);
+-	unsigned long created = __atomic_add_fetch(&dtape_diag_created_descriptors, 1, __ATOMIC_RELAXED);
+-	if (created % 1024 == 0) {
+-		dtape_log_error("MEMDIAG descriptors live=%ld created=%lu last_fd=%d", live, created, memfd);
+-	}
+-
+ 	return desc;
+ };
+ 
+@@ -148,7 +131,6 @@ static void dtape_map_shared_descriptor_release(dtape_map_shared_descriptor_t* d
+ 
+ 	close(desc->memfd);
+ 	free(desc);
+-	__atomic_sub_fetch(&dtape_diag_live_descriptors, 1, __ATOMIC_RELAXED);
+ };
+ 
+ static dtape_map_shared_entry_t* dtape_map_shared_entry_create(uint64_t address, uint64_t size, uint64_t page_offset, dtape_map_shared_descriptor_t* descriptor) {
+@@ -176,8 +158,78 @@ static void dtape_map_insert_shared_entry_locked(dtape_map_t* map, dtape_map_sha
+ 	RB_INSERT(dtape_map_shared_entry_head, &map->shared_entries, shared_entry);
+ };
+ 
++/**
++ * Drops whatever this map's shared entries describe within [start, end).
++ *
++ * A shared entry only records where a memfd is currently mapped, so it has to
++ * follow the mapping. Once a range is unmapped the address can be handed
++ * straight back out for an unrelated mapping, and because the tree is keyed on
++ * address alone, a stale entry left behind there does not merely waste a memfd:
++ * RB_INSERT treats the new entry as a duplicate and keeps the old one, so the
++ * range silently goes on naming the wrong memory.
++ */
++static void dtape_map_remove_shared_range_locked(dtape_map_t* map, uint64_t start, uint64_t end) {
++	if (end <= start) {
++		return;
++	}
++
++	for (;;) {
++		dtape_map_shared_entry_t* entry;
++		dtape_map_shared_entry_t* overlapping = NULL;
++		dtape_map_shared_entry_t* tail = NULL;
++
++		RB_FOREACH(entry, dtape_map_shared_entry_head, &map->shared_entries) {
++			if (entry->address < end && start < entry->address + entry->size) {
++				overlapping = entry;
++				break;
++			}
++		}
++
++		if (!overlapping) {
++			return;
++		}
++
++		RB_REMOVE(dtape_map_shared_entry_head, &map->shared_entries, overlapping);
++
++		// Removing from the middle of an entry leaves a piece on either side.
++		if (end < overlapping->address + overlapping->size) {
++			tail = dtape_map_shared_entry_create(end,
++				overlapping->address + overlapping->size - end,
++				overlapping->page_offset + ((end - overlapping->address) >> PAGE_SHIFT),
++				overlapping->descriptor);
++			if (!tail) {
++				dtape_log_error("out of memory splitting a shared mapping; dropping [0x%llx, 0x%llx)", (unsigned long long) end, (unsigned long long) (overlapping->address + overlapping->size));
++			}
++		}
++
++		if (overlapping->address < start) {
++			// The head keeps its address, so the tree key is unchanged and it
++			// can go straight back in; only its length shrinks.
++			overlapping->size = start - overlapping->address;
++			dtape_map_insert_shared_entry_locked(map, overlapping);
++		} else {
++			dtape_map_shared_entry_destroy(overlapping);
++		}
++
++		if (tail) {
++			dtape_map_insert_shared_entry_locked(map, tail);
++		}
++
++		// Neither piece intersects [start, end) any more, so this terminates.
++	}
++};
++
++static void dtape_map_remove_shared_range(dtape_map_t* map, uint64_t start, uint64_t end) {
++	dtape_mutex_lock(&map->shared_entry_lock);
++	dtape_map_remove_shared_range_locked(map, start, end);
++	dtape_mutex_unlock(&map->shared_entry_lock);
++};
++
+ static void dtape_map_insert_shared_entry(dtape_map_t* map, dtape_map_shared_entry_t* shared_entry) {
+ 	dtape_mutex_lock(&map->shared_entry_lock);
++	// A fresh mapping here proves that whatever used to be mapped at these
++	// addresses is gone, whether or not the task told us it was unmapping it.
++	dtape_map_remove_shared_range_locked(map, shared_entry->address, shared_entry->address + shared_entry->size);
+ 	dtape_map_insert_shared_entry_locked(map, shared_entry);
+ 	dtape_mutex_unlock(&map->shared_entry_lock);
+ };
+@@ -197,7 +249,9 @@ static size_t dtape_map_find_shared_entries_locked(dtape_map_t* map, uint64_t ad
+ 	}
+ 
+ 	RB_FOREACH(entry, dtape_map_shared_entry_head, &map->shared_entries) {
+-		if (entry->address + entry->size < address || entry->address > address + size) {
++		// Half-open ranges: an entry that merely abuts the region does not
++		// intersect it, and must not eat one of the caller's few slots.
++		if (entry->address + entry->size <= address || entry->address >= address + size) {
+ 			continue;
+ 		}
+ 
+@@ -211,9 +265,6 @@ static size_t dtape_map_find_shared_entries_locked(dtape_map_t* map, uint64_t ad
+ 	return count;
+ };
+ 
+-// TODO: we should have the process inform us when it unmaps a shared entry that we remapped;
+-//       right now, we only close the memfd when the process dies (so the memory is potentially in-use needlessly).
+-
+ void dtape_vm_map_destroy(vm_map_t map) {
+ 	if (os_ref_release(&map->map_refcnt) != 0) {
+ 		panic("VM map still in-use at destruction");
+@@ -369,14 +420,7 @@ kern_return_t copyoutmap(vm_map_t map, void* fromdata, vm_map_address_t toaddr,
+ 		memmove((void*)toaddr, fromdata, length);
+ 		return KERN_SUCCESS;
+ 	} else {
+-		/* darling-lol M58dq: name the failing user-copy target behind the M58G
+-		 * ipc_kmsg_put "copyout failed" drops. */
+-		if (!dtape_hooks->task_write_memory(map->dtape_task->context, toaddr, fromdata, length)) {
+-			dtape_log_error("M58DQ copyoutmap FAIL toaddr=0x%llx len=%lu map=%p task=%p",
+-			    (unsigned long long) toaddr, (unsigned long) length, (void*) map, (void*) map->dtape_task);
+-			return KERN_FAILURE;
+-		}
+-		return KERN_SUCCESS;
++		return dtape_hooks->task_write_memory(map->dtape_task->context, toaddr, fromdata, length) ? KERN_SUCCESS : KERN_FAILURE;
+ 	}
+ };
+ 
+@@ -538,6 +582,9 @@ kern_return_t vm_map_remove(vm_map_t map, vm_map_offset_t start, vm_map_offset_t
+ 		if (dtape_hooks->task_free_pages(map->dtape_task->context, start, dtape_byte_count_to_page_count_round_down(end - start)) < 0) {
+ 			return KERN_FAILURE;
+ 		}
++		// Nothing of ours is mapped there any more, so stop claiming it is and
++		// let go of the memfd if this was the last mapping of it.
++		dtape_map_remove_shared_range(map, start, end);
+ 		return KERN_SUCCESS;
+ 	}
+ };
+@@ -561,218 +608,250 @@ kern_return_t mach_vm_allocate_kernel(vm_map_t map, mach_vm_offset_t* addr, mach
+ 	}
+ };
+ 
+-/*
+- * darling-lol: functional `_mach_make_memory_entry`.
+- *
+- * This used to be `dtape_stub_unsafe()` (abort), so any guest call killed
+- * darlingserver outright. Entries are backed by a SHARED memfd held in a
+- * refcounted descriptor on the entry: every task mapping the entry observes
+- * the same pages (required e.g. for Chromium field-trial shared memory,
+- * where the browser writes after creating and helpers map later).
+- */
+-kern_return_t mach_memory_entry_allocate(vm_named_entry_t* user_entry_p, ipc_port_t* user_handle_p) {
+-	vm_named_entry_t user_entry;
+-	ipc_port_t user_handle;
++// Allocates a named entry and the port that names it. The port starts out with
++// one send right (for the caller) and a no-senders request, so the entry is
++// destroyed through ipc_kobject_destroy() -> mach_destroy_memory_entry() once
++// every task that held it is gone.
++static kern_return_t dtape_memory_entry_allocate(vm_named_entry_t* out_entry, ipc_port_t* out_port) {
++	vm_named_entry_t entry = (vm_named_entry_t)kalloc(sizeof(*entry));
+ 
+-	user_entry = (vm_named_entry_t) kalloc(sizeof(*user_entry));
+-	if (user_entry == NULL) {
+-		return KERN_FAILURE;
+-	}
+-	bzero(user_entry, sizeof(*user_entry));
+-
+-	named_entry_lock_init(user_entry);
+-	user_entry->backing.copy = NULL;
+-	user_entry->is_object = FALSE;
+-	user_entry->is_sub_map = FALSE;
+-	user_entry->is_copy = FALSE;
+-	user_entry->internal = FALSE;
+-	user_entry->size = 0;
+-	user_entry->offset = 0;
+-	user_entry->data_offset = 0;
+-	user_entry->protection = VM_PROT_NONE;
+-	user_entry->ref_count = 1;
+-
+-	user_handle = ipc_kobject_alloc_port((ipc_kobject_t)user_entry,
+-	    IKOT_NAMED_ENTRY,
+-	    IPC_KOBJECT_ALLOC_MAKE_SEND | IPC_KOBJECT_ALLOC_NSREQUEST);
+-	if (user_handle == IP_NULL) {
+-		kfree(user_entry, sizeof(*user_entry));
+-		return KERN_FAILURE;
++	if (!entry) {
++		return KERN_RESOURCE_SHORTAGE;
+ 	}
+ 
+-	*user_entry_p = user_entry;
+-	*user_handle_p = user_handle;
++	bzero(entry, sizeof(*entry));
++	named_entry_lock_init(entry);
++	entry->ref_count = 1;
++	entry->protection = VM_PROT_NONE;
++
++	*out_port = ipc_kobject_alloc_port((ipc_kobject_t)entry, IKOT_NAMED_ENTRY,
++		IPC_KOBJECT_ALLOC_MAKE_SEND | IPC_KOBJECT_ALLOC_NSREQUEST);
++	*out_entry = entry;
++
+ 	return KERN_SUCCESS;
+ };
+ 
+-kern_return_t _mach_make_memory_entry(vm_map_t target_map, memory_object_size_t* size, memory_object_offset_t offset, vm_prot_t permission, ipc_port_t* object_handle, ipc_port_t parent_entry) {
+-	vm_map_size_t map_size = (vm_map_size_t)*size;
+-	vm_map_offset_t map_start, map_end;
+-	vm_map_copy_t copy = NULL;
+-	vm_named_entry_t user_entry = NULL;
+-	ipc_port_t user_handle = IP_NULL;
+-	kern_return_t kr;
++// Returns the named entry behind a port, or NULL if the port does not name one
++// of ours.
++static vm_named_entry_t dtape_memory_entry_for_port(ipc_port_t port) {
++	vm_named_entry_t entry;
+ 
+-	if (object_handle == NULL) {
+-		return KERN_INVALID_ARGUMENT;
++	if (!IP_VALID(port) || ip_kotype(port) != IKOT_NAMED_ENTRY) {
++		return NULL;
+ 	}
+-	*object_handle = IP_NULL;
+ 
+-	if (target_map == VM_MAP_NULL) {
+-		target_map = current_map();
++	entry = (vm_named_entry_t)ip_get_kobject(port);
++
++	if (!entry || !entry->dtape_descriptor) {
++		return NULL;
+ 	}
+ 
+-	/* round the request out to whole pages, like XNU does */
+-	map_start = vm_map_trunc_page(offset, VM_MAP_PAGE_MASK(target_map));
+-	map_end = vm_map_round_page(offset + map_size, VM_MAP_PAGE_MASK(target_map));
+-	map_size = map_end - map_start;
++	return entry;
++};
+ 
+-	if (map_size == 0) {
++kern_return_t _mach_make_memory_entry(vm_map_t target_map, memory_object_size_t* size, memory_object_offset_t offset, vm_prot_t permission, ipc_port_t* object_handle, ipc_port_t parent_entry) {
++	// LOL_VM: temporary, revert before committing.
++	//dtape_log_error("LOL_VM: make_memory_entry size=%llu offset=%llu perm=0x%x parent=%p", size ? (unsigned long long) *size : 0ull, (unsigned long long) offset, permission, parent_entry);
++	vm_prot_t protection = permission & VM_PROT_ALL;
++	uint64_t rounded_size;
++	vm_named_entry_t entry = NULL;
++	ipc_port_t port = IP_NULL;
++	int memfd = -1;
++	dtape_map_shared_descriptor_t* descriptor = NULL;
++	kern_return_t kr;
++
++	if (!size || !object_handle) {
+ 		return KERN_INVALID_ARGUMENT;
+ 	}
+ 
+-	/*
+-	 * Backing strategy (darling-lol): a SHARED memfd, so every task that
+-	 * maps the entry sees the same pages. The previous snapshot-copy
+-	 * approach handed each mapper a private copy of the bytes as of
+-	 * creation time; a producer (e.g. Chromium's browser writing field
+-	 * trial state) then wrote into pages no consumer ever saw, and
+-	 * consumers parsed stale zeros -> garbage strings -> crashes
+-	 * (char_traits overlap assert) in every helper.
+-	 *
+-	 * Two cases, matching XNU:
+-	 *
+-	 *  - MAP_MEM_NAMED_CREATE: fresh anonymous entry of *size bytes (what
+-	 *    Chromium's PlatformSharedMemoryRegion allocation path wants).
+-	 *    memfds start zero-filled. A null parent alone does NOT imply this:
+-	 *    ordinary extraction calls also pass a null parent.
+-	 *
+-	 *  - parent_entry != NULL: seed the memfd with a snapshot of the
+-	 *    described region (copied once, at creation).
+-	 */
+-	int memfd = -1;
+-	dtape_map_shared_descriptor_t* desc = NULL;
++	// MAP_MEM_ONLY only changes caching attributes of an existing entry, which
++	// means nothing here.
++	if (permission & MAP_MEM_ONLY) {
++		*object_handle = IP_NULL;
++		return KERN_SUCCESS;
++	}
++
++	rounded_size = mach_vm_round_page(*size);
++
+ 	if (permission & MAP_MEM_NAMED_CREATE) {
+-		memfd = memfd_create("darling-mementry", MFD_CLOEXEC);
++		// Create a fresh anonymous shared region. This is the case userspace
++		// actually uses to make shared memory (it is what
++		// shm_open()/mmap(MAP_SHARED) look like on macOS).
++		if (rounded_size == 0) {
++			return KERN_INVALID_ARGUMENT;
++		}
++
++		memfd = memfd_create("darling-memory-entry", MFD_CLOEXEC);
+ 		if (memfd < 0) {
+-			dtape_diag_log_shortage("named-create memfd_create", memfd, map_size);
++			dtape_log_error("make_memory_entry: memfd_create failed for %llu bytes", (unsigned long long) rounded_size);
+ 			return KERN_RESOURCE_SHORTAGE;
+ 		}
+-		if (ftruncate(memfd, map_size) < 0) {
+-			dtape_diag_log_shortage("named-create ftruncate", memfd, map_size);
+-			close(memfd);
+-			return KERN_RESOURCE_SHORTAGE;
++
++		if (ftruncate(memfd, rounded_size) < 0) {
++			dtape_log_error("make_memory_entry: ftruncate to %llu bytes failed", (unsigned long long) rounded_size);
++			kr = KERN_RESOURCE_SHORTAGE;
++			goto out;
+ 		}
+-	} else {
+-		void* staged = NULL;
+-		int source_prot = PROT_READ | PROT_WRITE;
+-		uintptr_t remapped;
+-		/* snapshot the region, then publish it into the shared object */
+-		kr = vm_map_copyin_common(target_map, map_start, map_size,
+-		    FALSE /* src_destroy */, FALSE /* src_volatile */, &copy,
+-		    FALSE /* use_maxprot */);
++
++		descriptor = dtape_map_shared_descriptor_create(memfd, rounded_size);
++		if (!descriptor) {
++			dtape_log_error("make_memory_entry: out of memory describing %llu bytes", (unsigned long long) rounded_size);
++			kr = KERN_RESOURCE_SHORTAGE;
++			goto out;
++		}
++		memfd = -1; // the descriptor owns it now
++
++		kr = dtape_memory_entry_allocate(&entry, &port);
+ 		if (kr != KERN_SUCCESS) {
+-			dtape_log_error("mach_make_memory_entry: copyin failed kr=%d map=%p start=%#llx size=%#llx perms=%#x",
+-			    kr, (void*)target_map, (unsigned long long)map_start, (unsigned long long)map_size, permission);
+-			return kr;
++			goto out;
+ 		}
+-		memfd = memfd_create("darling-mementry", MFD_CLOEXEC);
+-		if (memfd < 0 || ftruncate(memfd, map_size) < 0) {
+-			if (memfd >= 0) close(memfd);
+-			vm_map_copy_discard(copy);
+-			return KERN_RESOURCE_SHORTAGE;
++
++		entry->dtape_descriptor = descriptor;
++		entry->dtape_page_offset = 0;
++		entry->size = rounded_size;
++		entry->offset = 0;
++		entry->protection = protection ? protection : VM_PROT_DEFAULT;
++		descriptor = NULL; // the entry owns it now
++
++		*size = rounded_size;
++		*object_handle = port;
++		return KERN_SUCCESS;
++	}
++
++	{
++		// Sub-entry of an existing one: hand back a second name for a window of
++		// the same memfd.
++		vm_named_entry_t parent = dtape_memory_entry_for_port(parent_entry);
++
++		if (!parent) {
++			// No parent entry: `offset` is an address in the target map and the
++			// caller wants a name for what is already mapped there. That is how
++			// a writable shared region is turned into a read-only one (map it,
++			// ask for a VM_PROT_READ name over the mapping, throw the mapping
++			// away), so it has to work at least whenever the range is already
++			// backed by one of our memfd-backed shared mappings: the new entry
++			// is then just a second name for the same memfd window.
++			dtape_map_shared_entry_t* candidates[8];
++			dtape_map_shared_entry_t* covering = NULL;
++			size_t candidate_count;
++			size_t i;
++
++			if ((offset & PAGE_MASK) != 0) {
++				return KERN_INVALID_ARGUMENT;
++			}
++
++			dtape_mutex_lock(&target_map->shared_entry_lock);
++
++			candidate_count = dtape_map_find_shared_entries_locked(target_map, offset, rounded_size, candidates, sizeof(candidates) / sizeof(*candidates));
++
++			for (i = 0; i < candidate_count; ++i) {
++				if (candidates[i]->address <= offset && offset + rounded_size <= candidates[i]->address + candidates[i]->size) {
++					covering = candidates[i];
++					break;
++				}
++			}
++
++			if (!covering) {
++				dtape_log_error("make_memory_entry: no shared mapping covers [0x%llx, 0x%llx) in map %p; %zu candidate(s) considered", (unsigned long long) offset, (unsigned long long) (offset + rounded_size), target_map, candidate_count);
++				for (i = 0; i < candidate_count; ++i) {
++					dtape_log_error("make_memory_entry:   candidate %zu: [0x%llx, 0x%llx)", i, (unsigned long long) candidates[i]->address, (unsigned long long) (candidates[i]->address + candidates[i]->size));
++				}
++				dtape_mutex_unlock(&target_map->shared_entry_lock);
++				// Private (non-shared) memory would have to be replaced with a
++				// shared mapping behind the task's back to name it. Refuse
++				// rather than pretend.
++				dtape_stub_safe("naming a mapping that isn't already shared memory");
++				return KERN_INVALID_ARGUMENT;
++			}
++
++			descriptor = covering->descriptor;
++			dtape_map_shared_descriptor_retain(descriptor);
++
++			kr = dtape_memory_entry_allocate(&entry, &port);
++			if (kr != KERN_SUCCESS) {
++				dtape_mutex_unlock(&target_map->shared_entry_lock);
++				dtape_map_shared_descriptor_release(descriptor);
++				return kr;
++			}
++
++			entry->dtape_descriptor = descriptor;
++			entry->dtape_page_offset = covering->page_offset + ((offset - covering->address) >> PAGE_SHIFT);
++			entry->size = rounded_size;
++			entry->offset = 0;
++			entry->protection = protection ? protection : VM_PROT_DEFAULT;
++
++			dtape_mutex_unlock(&target_map->shared_entry_lock);
++
++			*size = rounded_size;
++			*object_handle = port;
++			return KERN_SUCCESS;
+ 		}
+-		staged = mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, 0);
+-		if (staged == MAP_FAILED) {
+-			close(memfd);
+-			vm_map_copy_discard(copy);
+-			return KERN_RESOURCE_SHORTAGE;
++
++		named_entry_lock(parent);
++
++		if ((offset & PAGE_MASK) != 0 || offset + rounded_size > parent->size) {
++			named_entry_unlock(parent);
++			return KERN_INVALID_ARGUMENT;
+ 		}
+-		memcpy(staged, (char*)copy->cpy_kdata + copy->offset, map_size);
+-		munmap(staged, map_size);
+-		vm_map_copy_discard(copy);
+-		copy = NULL;
+-
+-		/* Extraction must retain shared-object semantics, not snapshot
+-		 * semantics. Replace the source task's pages with a MAP_SHARED view
+-		 * of the populated memfd. Future writes by the creator are then
+-		 * visible to every process that maps the named entry. */
+-		/* The requested permission constrains mappings made from the named
+-		 * entry; it does not downgrade the creator's existing mapping. The
+-		 * common Chromium extraction path exports a read-only handle from a
+-		 * writable region and continues writing through the original view. */
+-		if (permission & VM_PROT_EXECUTE)
+-			source_prot |= PROT_EXEC;
+-		remapped = dtape_hooks->task_map_file(
+-		    target_map->dtape_task->context, memfd,
+-		    dtape_byte_count_to_page_count_round_up(map_size), source_prot,
+-		    map_start, 0,
+-		    dtape_memory_flag_fixed | dtape_memory_flag_overwrite);
+-		if (remapped != map_start) {
+-			close(memfd);
+-			return KERN_FAILURE;
++
++		if (protection & ~parent->protection) {
++			named_entry_unlock(parent);
++			return KERN_PROTECTION_FAILURE;
+ 		}
+-	}
+ 
+-	desc = dtape_map_shared_descriptor_create(memfd, map_size);
+-	if (desc == NULL) {
+-		dtape_diag_log_shortage("named-entry descriptor malloc", memfd, map_size);
+-		close(memfd);
+-		return KERN_RESOURCE_SHORTAGE;
+-	}
+-	memfd = -1; /* the descriptor now owns the memfd */
++		descriptor = parent->dtape_descriptor;
++		dtape_map_shared_descriptor_retain(descriptor);
+ 
+-	kr = mach_memory_entry_allocate(&user_entry, &user_handle);
+-	if (kr != KERN_SUCCESS) {
+-		dtape_map_shared_descriptor_release(desc);
+-		dtape_log_error("mach_make_memory_entry: allocate failed kr=%d", kr);
+-		return kr;
+-	}
++		kr = dtape_memory_entry_allocate(&entry, &port);
++		if (kr != KERN_SUCCESS) {
++			named_entry_unlock(parent);
++			dtape_map_shared_descriptor_release(descriptor);
++			return kr;
++		}
+ 
+-	named_entry_lock(user_entry);
+-	user_entry->backing.copy = NULL;
+-	user_entry->is_copy = FALSE;
+-	user_entry->dtape_descriptor = desc;
+-	user_entry->size = map_size;
+-	user_entry->offset = offset - map_start; /* logical offset, memfd base 0 */
+-	user_entry->data_offset = 0;
+-	user_entry->protection = permission;
+-	named_entry_unlock(user_entry);
++		entry->dtape_descriptor = descriptor;
++		entry->dtape_page_offset = parent->dtape_page_offset + (offset >> PAGE_SHIFT);
++		entry->size = rounded_size;
++		entry->offset = 0;
++		entry->protection = protection ? protection : parent->protection;
+ 
+-	*size = (memory_object_size_t)map_size;
+-	*object_handle = user_handle;
+-	return KERN_SUCCESS;
+-};
++		named_entry_unlock(parent);
+ 
+-kern_return_t mach_make_memory_entry_64(vm_map_t target_map, memory_object_size_t* size, memory_object_offset_t offset, vm_prot_t permission, ipc_port_t* object_handle, ipc_port_t parent_handle) {
+-	return _mach_make_memory_entry(target_map, size, offset, permission, object_handle, parent_handle);
+-};
++		*size = rounded_size;
++		*object_handle = port;
++		return KERN_SUCCESS;
++	}
+ 
+-kern_return_t mach_make_memory_entry(vm_map_t target_map, vm_size_t* size, vm_offset_t offset, vm_prot_t permission, ipc_port_t* object_handle, ipc_port_t parent_entry) {
+-	memory_object_size_t mo_size = (memory_object_size_t)*size;
+-	kern_return_t kr = _mach_make_memory_entry(target_map, &mo_size, (memory_object_offset_t)offset, permission, object_handle, parent_entry);
+-	*size = (vm_size_t)mo_size;
++out:
++	if (descriptor) {
++		dtape_map_shared_descriptor_release(descriptor);
++	}
++	if (memfd >= 0) {
++		close(memfd);
++	}
+ 	return kr;
+ };
+ 
+ kern_return_t mach_memory_entry_access_tracking(ipc_port_t entry_port, int* access_tracking, uint32_t* access_tracking_reads, uint32_t* access_tracking_writes) {
+-	/* No access tracking in duct-tape; report "no tracking" rather than
+-	 * aborting the server. */
+-	if (access_tracking) *access_tracking = 0;
+-	if (access_tracking_reads) *access_tracking_reads = 0;
+-	if (access_tracking_writes) *access_tracking_writes = 0;
+-	return KERN_SUCCESS;
++	// No VM objects, so there are no page faults to count.
++	dtape_stub_safe();
++	return KERN_NOT_SUPPORTED;
+ };
+ 
+ kern_return_t mach_memory_entry_ownership(ipc_port_t entry_port, task_t owner, int ledger_tag, int ledger_flags) {
+-	/* Ledger ownership is not modeled; accept and ignore. */
++	// Ledger accounting only; nothing here keeps per-task memory ledgers.
++	dtape_stub_safe();
+ 	return KERN_SUCCESS;
+ };
+ 
+ kern_return_t mach_memory_entry_purgable_control(ipc_port_t entry_port, vm_purgable_t control, int* state) {
+-	/* Not purgable here. */
+-	if (state) *state = VM_PURGABLE_NONVOLATILE;
+-	return KERN_SUCCESS;
++	// A memfd is never volatile, so report the entry as non-purgeable and let
++	// callers fall back to holding on to the memory themselves.
++	dtape_stub_safe();
++	if (state) {
++		*state = VM_PURGABLE_NONVOLATILE;
++	}
++	return KERN_INVALID_ARGUMENT;
+ };
+ 
+ kern_return_t mach_memory_info(host_priv_t host, mach_zone_name_array_t* namesp, mach_msg_type_number_t* namesCntp, mach_zone_info_array_t* infop, mach_msg_type_number_t* infoCntp, mach_memory_info_array_t* memoryInfop, mach_msg_type_number_t* memoryInfoCntp) {
+@@ -823,116 +902,127 @@ kern_return_t mach_vm_machine_attribute(vm_map_t map, mach_vm_address_t addr, ma
+ 	dtape_stub_unsafe();
+ };
+ 
+-kern_return_t mach_vm_map_external(vm_map_t target_map, mach_vm_offset_t* address, mach_vm_size_t initial_size, mach_vm_offset_t mask, int flags, ipc_port_t port, vm_object_offset_t offset, boolean_t copy, vm_prot_t cur_protection, vm_prot_t max_protection, vm_inherit_t inheritance) {
+-	/*
+-	 * darling-lol: real implementation. This used to be a "safe" stub
+-	 * returning KERN_SUCCESS without mapping anything or setting
+-	 * *address -- so every VM_FLAGS_ANYWHERE caller (notably libplatform's
+-	 * os_alloc heap via mach_vm_map, which backs ALL os_alloc_once
+-	 * singletons incl. libnotify globals) got success plus a stale address
+-	 * and crashed later on the unmapped pointer. Two cases:
+-	 *
+-	 *  - MEMORY_OBJECT_NULL port: anonymous mapping. Allocate fresh pages
+-	 *    in the target task (zero-filled by the host mmap underneath).
+-	 *  - named-entry port (from _mach_make_memory_entry): map a duplicate
+-	 *    of the entry's kernel-buffer copy at the requested offset. The
+-	 *    entry keeps its own copy so it stays mappable (and destroyable)
+-	 *    afterwards. NOTE: this gives copy semantics, not true cross-task
+-	 *    sharing; sufficient to unblock, revisit if sharing artifacts show.
+-	 */
++static int dtape_vm_prot_to_linux_prot(vm_prot_t protection) {
+ 	int prot = 0;
+-	if (cur_protection & VM_PROT_READ)
++
++	if (protection & VM_PROT_READ) {
+ 		prot |= PROT_READ;
+-	if (cur_protection & VM_PROT_WRITE)
++	}
++	if (protection & VM_PROT_WRITE) {
+ 		prot |= PROT_WRITE;
+-	if (cur_protection & VM_PROT_EXECUTE)
++	}
++	if (protection & VM_PROT_EXECUTE) {
+ 		prot |= PROT_EXEC;
+-
+-	if (target_map == VM_MAP_NULL) {
+-		target_map = current_map();
+ 	}
+-	if (target_map == VM_MAP_NULL || address == NULL) {
++
++	return prot;
++};
++
++kern_return_t mach_vm_map_external(vm_map_t target_map, mach_vm_offset_t* address, mach_vm_size_t initial_size, mach_vm_offset_t mask, int flags, ipc_port_t port, vm_object_offset_t offset, boolean_t copy, vm_prot_t cur_protection, vm_prot_t max_protection, vm_inherit_t inheritance) {
++	vm_named_entry_t entry;
++	uint64_t rounded_size = mach_vm_round_page(initial_size);
++	size_t page_count = dtape_byte_count_to_page_count_round_up(rounded_size);
++	dtape_memory_flags_t memory_flags = dtape_memory_flag_none;
++	dtape_map_shared_entry_t* shared_entry = NULL;
++	boolean_t mask_cur_protection = (cur_protection & VM_PROT_IS_MASK) != 0;
++	boolean_t mask_max_protection = (max_protection & VM_PROT_IS_MASK) != 0;
++	uintptr_t mapped;
++	int prot;
++
++	if (!address || target_map == VM_MAP_NULL || rounded_size == 0) {
+ 		return KERN_INVALID_ARGUMENT;
+ 	}
+ 
+-	if (port == MEMORY_OBJECT_NULL) {
+-		uintptr_t hint = (flags & VM_FLAGS_ANYWHERE) ? 0 : (uintptr_t)*address;
+-		uintptr_t addr = dtape_hooks->task_allocate_pages(
+-		    target_map->dtape_task->context,
+-		    dtape_byte_count_to_page_count_round_up(initial_size),
+-		    prot, hint, 0);
+-		if (addr == 0) {
+-			return KERN_RESOURCE_SHORTAGE;
+-		}
+-		*address = (mach_vm_offset_t)addr;
+-		return KERN_SUCCESS;
++	cur_protection &= ~VM_PROT_IS_MASK;
++	max_protection &= ~VM_PROT_IS_MASK;
++
++	prot = dtape_vm_prot_to_linux_prot(cur_protection);
++
++	if (!(flags & VM_FLAGS_ANYWHERE)) {
++		memory_flags |= dtape_memory_flag_fixed;
++	}
++	if (flags & VM_FLAGS_OVERWRITE) {
++		memory_flags |= dtape_memory_flag_overwrite;
+ 	}
+ 
+-	if (IP_VALID(port) && ip_kotype(port) == IKOT_NAMED_ENTRY) {
+-		vm_named_entry_t entry = (vm_named_entry_t)ip_get_kobject(port);
+-		dtape_map_shared_descriptor_t* desc = NULL;
+-		vm_map_offset_t entry_off = 0;
+-		vm_map_size_t entry_size = 0;
+-		vm_prot_t entry_prot = VM_PROT_NONE;
+-		uintptr_t map_addr;
+-		uint64_t page_off;
+-
+-		named_entry_lock(entry);
+-		desc = (dtape_map_shared_descriptor_t*)entry->dtape_descriptor;
+-		entry_off = entry->offset;
+-		entry_size = entry->size;
+-		entry_prot = entry->protection;
+-		if (desc != NULL) {
+-			dtape_map_shared_descriptor_retain(desc);
+-		}
+-		named_entry_unlock(entry);
++	entry = dtape_memory_entry_for_port(port);
++
++	// LOL_VM: temporary, revert before committing.
++	if (IP_VALID(port)) {
++		//dtape_log_error("LOL_VM: vm_map_external size=%llu flags=0x%x port=%p entry=%p cur=0x%x max=0x%x", (unsigned long long) initial_size, flags, port, entry, cur_protection, max_protection);
++	}
+ 
+-		if (desc == NULL) {
++	if (!entry) {
++		if (IP_VALID(port)) {
++			// Mapping a pager or a submap; neither exists here.
++			dtape_stub_safe("only named entries and anonymous memory can be mapped");
+ 			return KERN_INVALID_ARGUMENT;
+ 		}
+-		/* darling-lol M53: enforce the entry's max protection. XNU
+-		 * refuses a writable mapping of a read-only entry with
+-		 * KERN_INVALID_RIGHT, and Chromium's shared-memory Take()
+-		 * depends on exactly that signal to detect read-only regions
+-		 * (without it, every readonly Mojo SHM probe "succeeds"
+-		 * writable and the GPU dies in a CHECK). Mask to VM_PROT bits:
+-		 * creation permission carries MAP_MEM_NAMED_CREATE etc. */
+-		if ((cur_protection & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE) &
+-		     ~(entry_prot & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE))) != 0) {
+-			dtape_map_shared_descriptor_release(desc);
+-			return KERN_INVALID_RIGHT;
+-		}
+-		if ((vm_map_offset_t)offset >= entry_size) {
+-			dtape_map_shared_descriptor_release(desc);
+-			return KERN_INVALID_ARGUMENT;
++
++		// No port means plain anonymous memory.
++		mapped = dtape_hooks->task_allocate_pages(target_map->dtape_task->context, page_count, prot, (flags & VM_FLAGS_ANYWHERE) ? 0 : *address, memory_flags);
++		if (mapped == 0) {
++			return KERN_NO_SPACE;
+ 		}
+-		/* Map the shared object itself (MAP_SHARED in the target), so
+-		 * all tasks mapping the entry observe the same pages. */
+-		page_off = ((uint64_t)entry_off + (uint64_t)offset) / 4096;
+-		if ((flags & VM_FLAGS_ANYWHERE) != 0) {
+-			map_addr = dtape_hooks->task_map_file(
+-			    target_map->dtape_task->context,
+-			    desc->memfd,
+-			    dtape_byte_count_to_page_count_round_up(initial_size),
+-			    prot, 0, page_off, dtape_memory_flag_none);
+-		} else {
+-			map_addr = dtape_hooks->task_map_file(
+-			    target_map->dtape_task->context,
+-			    desc->memfd,
+-			    dtape_byte_count_to_page_count_round_up(initial_size),
+-			    prot, (uintptr_t)*address, page_off,
+-			    dtape_memory_flag_fixed | dtape_memory_flag_overwrite);
++
++		*address = mapped;
++		return KERN_SUCCESS;
++	}
++
++	named_entry_lock(entry);
++
++	if ((offset & PAGE_MASK) != 0 || offset + rounded_size > entry->size) {
++		named_entry_unlock(entry);
++		return KERN_INVALID_ARGUMENT;
++	}
++
++	// A named entry can only be mapped with protections it actually carries.
++	// VM_PROT_IS_MASK asks for the request to be trimmed to what the entry
++	// allows instead of being refused; see vm_map_enter_mem_object_helper().
++	if (mask_max_protection) {
++		max_protection &= entry->protection;
++	}
++	if (mask_cur_protection) {
++		cur_protection &= entry->protection;
++		prot = dtape_vm_prot_to_linux_prot(cur_protection);
++	}
++
++	// KERN_INVALID_RIGHT, not KERN_PROTECTION_FAILURE - that is what XNU
++	// returns here, and callers do tell the two apart. Chromium, for one, maps
++	// a shared memory handle read-write on purpose just to find out whether it
++	// is read-only, and only accepts KERN_INVALID_RIGHT as "yes, it is";
++	// anything else makes it CHECK-fail on startup.
++	if ((entry->protection & max_protection) != max_protection ||
++	    (entry->protection & cur_protection) != cur_protection) {
++		named_entry_unlock(entry);
++		return KERN_INVALID_RIGHT;
++	}
++
++	{
++		dtape_map_shared_descriptor_t* descriptor = entry->dtape_descriptor;
++		uint64_t page_offset = entry->dtape_page_offset + (offset >> PAGE_SHIFT);
++
++		dtape_map_shared_descriptor_retain(descriptor);
++		named_entry_unlock(entry);
++
++		mapped = dtape_hooks->task_map_file(target_map->dtape_task->context, descriptor->memfd, page_count, prot, (flags & VM_FLAGS_ANYWHERE) ? 0 : *address, page_offset, memory_flags);
++		if (mapped == 0) {
++			dtape_map_shared_descriptor_release(descriptor);
++			return KERN_NO_SPACE;
+ 		}
+-		dtape_map_shared_descriptor_release(desc);
+-		if (map_addr == 0) {
+-			return KERN_FAILURE;
++
++		shared_entry = dtape_map_shared_entry_create(mapped, rounded_size, page_offset, descriptor);
++		dtape_map_shared_descriptor_release(descriptor);
++
++		if (!shared_entry) {
++			return KERN_RESOURCE_SHORTAGE;
+ 		}
+-		*address = (mach_vm_offset_t)map_addr +
+-		    (((uint64_t)entry_off + (uint64_t)offset) % 4096);
+-		return KERN_SUCCESS;
++
++		dtape_map_insert_shared_entry(target_map, shared_entry);
+ 	}
+ 
+-	return KERN_INVALID_ARGUMENT;
++	*address = mapped;
++	return KERN_SUCCESS;
+ };
+ 
+ kern_return_t mach_vm_msync(vm_map_t map, mach_vm_offset_t address, mach_vm_size_t size, vm_sync_t sync_flags) {
+@@ -960,22 +1050,15 @@ kern_return_t mach_vm_msync(vm_map_t map, mach_vm_offset_t address, mach_vm_size
+ };
+ 
+ kern_return_t mach_vm_page_info(vm_map_t map, mach_vm_address_t address, vm_page_info_flavor_t flavor, vm_page_info_t info, mach_msg_type_number_t* count) {
+-	// Page accounting is not implemented; let the caller handle unsupported queries.
+-	if (count) *count = 0;
+-	return KERN_NOT_SUPPORTED;
++	dtape_stub_unsafe();
+ };
+ 
+ kern_return_t mach_vm_page_query(vm_map_t map, mach_vm_offset_t offset, int* disposition, int* ref_count) {
+-	// Page accounting is not implemented; let the caller handle unsupported queries.
+-	if (disposition) *disposition = 0;
+-	if (ref_count) *ref_count = 0;
+-	return KERN_NOT_SUPPORTED;
++	dtape_stub_unsafe();
+ };
+ 
+ kern_return_t mach_vm_page_range_query(vm_map_t map, mach_vm_offset_t address, mach_vm_size_t size, mach_vm_address_t dispositions_addr, mach_vm_size_t* dispositions_count) {
+-	// Page accounting is not implemented; let the caller handle unsupported queries.
+-	if (dispositions_count) *dispositions_count = 0;
+-	return KERN_NOT_SUPPORTED;
++	dtape_stub_unsafe();
+ };
+ 
+ kern_return_t mach_vm_protect(vm_map_t map, mach_vm_offset_t start, mach_vm_size_t size, boolean_t set_maximum, vm_prot_t new_protection) {
+@@ -1103,8 +1186,7 @@ region_info_out:
+ 			return kr;
+ 		};
+ 		default:
+-			if (object_name) *object_name = IP_NULL;
+-			return KERN_INVALID_ARGUMENT;
++			dtape_stub_unsafe("Unimplemented flavor");
+ 	}
+ };
+ 
+@@ -1204,7 +1286,7 @@ static kern_return_t mach_vm_remap_external_shared(vm_map_t target_map, mach_vm_
+ 
+ 	src_existing_entry_count = dtape_map_find_shared_entries_locked(src_map, start_memaddr, map_size, src_existing_entries, sizeof(src_existing_entries) / sizeof(*src_existing_entries));
+ 
+-	if (src_existing_entry_count == 1 && src_existing_entries[0]->address == start_memaddr && src_existing_entries[0]->size == map_size) {
++	if (src_existing_entry_count == 1 && src_existing_entries[0]->address == start_memaddr && src_existing_entries[0]->size >= map_size) {
+ 		// special case for what LLDB does with dyld info
+ 		dtape_map_shared_descriptor_retain(src_existing_entries[0]->descriptor);
+ 		descriptor = src_existing_entries[0]->descriptor;
+@@ -1789,10 +1871,6 @@ mach_destroy_memory_entry(
+ 	named_entry->ref_count -= 1;
+ 
+ 	if (named_entry->ref_count == 0) {
+-		/* darling-lol: release duct-tape shared backing first. */
+-		dtape_map_shared_descriptor_t* desc =
+-		    (dtape_map_shared_descriptor_t*)named_entry->dtape_descriptor;
+-		named_entry->dtape_descriptor = NULL;
+ 		if (named_entry->is_sub_map) {
+ 			vm_map_deallocate(named_entry->backing.map);
+ 		} else if (named_entry->is_copy) {
+@@ -1802,15 +1880,15 @@ mach_destroy_memory_entry(
+ 			assert(named_entry->backing.copy->cpy_hdr.nentries == 1);
+ #endif // __DARLING__
+ 			vm_map_copy_discard(named_entry->backing.copy);
++		} else if (named_entry->dtape_descriptor) {
++			dtape_map_shared_descriptor_release(named_entry->dtape_descriptor);
++			named_entry->dtape_descriptor = NULL;
+ 		} else {
+ 			assert(named_entry->backing.copy == VM_MAP_COPY_NULL);
+ 		}
+ 
+ 		named_entry_unlock(named_entry);
+ 		named_entry_lock_destroy(named_entry);
+-		if (desc != NULL) {
+-			dtape_map_shared_descriptor_release(desc);
+-		}
+ 
+ #if VM_NAMED_ENTRY_LIST
+ 		lck_mtx_lock_spin(&vm_named_entry_list_lock_data);
+diff --git a/duct-tape/src/stubs.c b/duct-tape/src/stubs.c
+index 39a8c8d..3f2899a 100644
+--- a/duct-tape/src/stubs.c
++++ b/duct-tape/src/stubs.c
+@@ -106,10 +106,6 @@ int cpu_number(void) {
+ 	return 0;
+ };
+ 
+-void fileport_releasefg(struct fileglob* fg) {
+-	dtape_stub();
+-};
+-
+ void workq_deallocate_safe(struct workqueue* wq) {
+ 	dtape_stub();
+ };
+diff --git a/duct-tape/src/thread.c b/duct-tape/src/thread.c
+index a6cdb2c..6399601 100644
+--- a/duct-tape/src/thread.c
++++ b/duct-tape/src/thread.c
+@@ -273,6 +273,24 @@ void dtape_thread_process_signal(dtape_thread_t* thread, int bsd_signal_number,
+ 
+ 	thread->processing_signal = true;
+ 
++	/* LOL_SIG: temporary instrumentation, remove before committing.  The state
++	   the core dump ends up with is not the state the fault happened in, so the
++	   only place the real one can be seen is here, where it has just been
++	   copied in from the process. */
++	{
++		x86_thread_state64_t lolts;
++		mach_msg_type_number_t lolcnt = x86_THREAD_STATE64_COUNT;
++
++		if (thread_get_state(current_thread(), x86_THREAD_STATE64, (thread_state_t) &lolts, &lolcnt) == KERN_SUCCESS) {
++			dtape_log_error("LOL_SIG thread=%s bsd=%d linux=%d code=%d addr=0x%lx rip=0x%llx rsp=0x%llx rbp=0x%llx rax=0x%llx rdi=0x%llx rsi=0x%llx",
++				thread->name ? thread->name : "?",
++				bsd_signal_number, linux_signal_number, code, (unsigned long) signal_address,
++				(unsigned long long) lolts.rip, (unsigned long long) lolts.rsp,
++				(unsigned long long) lolts.rbp, (unsigned long long) lolts.rax,
++				(unsigned long long) lolts.rdi, (unsigned long long) lolts.rsi);
++		}
++	}
++
+ 	if (code == LINUX_SI_USER) {
+ 		if (task->has_sigexc) {
+ 			codes[0] = EXC_SOFT_SIGNAL;
+@@ -555,6 +573,7 @@ wait_result_t thread_block(thread_continue_t continuation) {
+ boolean_t thread_unblock(thread_t xthread, wait_result_t wresult) {
+ 	dtape_thread_t* thread = dtape_thread_for_xnu_thread(xthread);
+ 	libsimple_lock_lock(&thread->block_suspend_gate);
++
+ 	thread->xnu_thread.wait_result = wresult;
+ 	/* Match XNU's thread_unblock: a timer from a previous timed wait must
+ 	 * not expire during the thread's next, untimed Mach receive. */
+@@ -566,6 +585,21 @@ boolean_t thread_unblock(thread_t xthread, wait_result_t wresult) {
+ 	}
+ 	thread->xnu_thread.state &= ~(TH_WAIT | TH_UNINT);
+ 	thread->xnu_thread.state |= TH_RUN;
++
++	// Cancel the wait timer, as XNU's thread_unblock() does. A timer armed for a
++	// timed wait outlives that wait if the thread is woken before the deadline,
++	// and thread_timer_expire() then fires it against whatever wait the thread
++	// has entered since - typically an untimed one, which has no business
++	// returning THREAD_TIMED_OUT and whose caller cannot tell the difference. An
++	// untimed mach_msg receive woken this way comes back MACH_RCV_TIMED_OUT, and
++	// libdispatch treats that as a bug in itself and traps.
++	if (thread->xnu_thread.wait_timer_is_set) {
++		if (timer_call_cancel(&thread->xnu_thread.wait_timer)) {
++			thread->xnu_thread.wait_timer_active--;
++		}
++		thread->xnu_thread.wait_timer_is_set = FALSE;
++	}
++
+ 	dtape_hooks->thread_resume(thread->context);
+ 	libsimple_lock_unlock(&thread->block_suspend_gate);
+ 	return TRUE;
+diff --git a/duct-tape/xnu/osfmk/vm/vm_map.h b/duct-tape/xnu/osfmk/vm/vm_map.h
+index 4321a91..d9d8015 100644
+--- a/duct-tape/xnu/osfmk/vm/vm_map.h
++++ b/duct-tape/xnu/osfmk/vm/vm_map.h
+@@ -184,6 +184,16 @@ extern queue_head_t vm_named_entry_list;
+ 
+ struct vm_named_entry {
+ 	decl_lck_mtx_data(, Lock);              /* Synchronization */
++#ifdef __DARLING__
++	/*
++	 * There are no VM objects here, so a named entry is backed by a memfd
++	 * shared between the server and every task that maps it - the same
++	 * mechanism vm_remap() and out-of-line message data already use. When
++	 * this is set, backing.copy is unused and all of the is_* bits are 0.
++	 */
++	struct dtape_map_shared_descriptor* dtape_descriptor;
++	uint64_t dtape_page_offset;             /* offset into the memfd, in pages */
++#endif
+ 	union {
+ 		vm_map_t        map;            /* map backing submap */
+ 		vm_map_copy_t   copy;           /* a VM map copy */
+diff --git a/internal-include/darlingserver/process.hpp b/internal-include/darlingserver/process.hpp
+index 31772dc..a8c1682 100644
+--- a/internal-include/darlingserver/process.hpp
++++ b/internal-include/darlingserver/process.hpp
+@@ -125,6 +125,7 @@ namespace DarlingServer {
+ 		bool _readOrWriteMemory(bool isWrite, uintptr_t remoteAddress, void* localBuffer, size_t length, int* errorCode) const;
+ 
+ 		void _notifyListeningKqchannels(uint32_t event, int64_t data);
++		void _notifyForkWaiter();
+ 
+ #if DSERVER_EXTENDED_DEBUG
+ 		void _registerName(uint32_t name, uintptr_t pointer);
+@@ -178,7 +179,7 @@ namespace DarlingServer {
+ 		bool readMemory(uintptr_t remoteAddress, void* localBuffer, size_t length, int* errorCode = nullptr) const;
+ 		bool writeMemory(uintptr_t remoteAddress, const void* localBuffer, size_t length, int* errorCode = nullptr) const;
+ 
+-		void notifyCheckin(Architecture architecture);
++		void notifyCheckin(Architecture architecture, pid_t checkinThreadNSID);
+ 		void setPendingReplacement();
+ 
+ 		void registerKqchan(std::shared_ptr<Kqchan> kqchan);
+diff --git a/internal-include/darlingserver/thread.hpp b/internal-include/darlingserver/thread.hpp
+index 57117f2..6e57276 100644
+--- a/internal-include/darlingserver/thread.hpp
++++ b/internal-include/darlingserver/thread.hpp
+@@ -81,6 +81,15 @@ namespace DarlingServer {
+ 		mutable std::shared_mutex _rwlock;
+ 		StackPool::Stack _stack;
+ 		bool _suspended = false;
++		// Set when a resume arrives for a microthread that XNU has already marked as
++		// waiting but that has not yet parked itself in suspend(). The waitq lock is
++		// dropped before thread_block(), so a signal from another OS thread can land
++		// in that window; without this, the wakeup would be dropped and the
++		// microthread would park forever.
++		bool _pendingResume = false;
++		// Set by suspend() when it consumed a _pendingResume; makes doWork()
++		// re-schedule the microthread once it reaches the microthread "top".
++		bool _needsReschedule = false;
+ 		ucontext_t _resumeContext;
+ 		dtape_thread_t* _dtapeThread;
+ 		std::function<void()> _continuationCallback = nullptr;
+diff --git a/internal-include/darlingserver/workers.hpp b/internal-include/darlingserver/workers.hpp
+index 2f6e7aa..b3a283c 100644
+--- a/internal-include/darlingserver/workers.hpp
++++ b/internal-include/darlingserver/workers.hpp
+@@ -31,6 +31,7 @@
+ #include <optional>
+ 
+ #include <darlingserver/config.hpp>
++#include <darlingserver/logging.hpp>
+ 
+ namespace DarlingServer {
+ 	template<class WorkItem>
+@@ -158,10 +159,21 @@ namespace DarlingServer {
+ 		WorkQueue(WorkQueue&&) = delete;
+ 		WorkQueue& operator=(WorkQueue&&) = delete;
+ 
++		// LOL_WQ: temporary, revert before committing.
++		static DarlingServer::Log& _lolLog() {
++			static DarlingServer::Log log("workqueue");
++			return log;
++		};
++
+ 		void push(WorkItem workItem) {
+ 			std::unique_lock lock(_queueMutex);
+ 			_workItems.push(std::move(workItem));
+ 
++			// LOL_WQ: temporary, revert before committing.
++			if (_workItems.size() > 8) {
++				_lolLog().error() << "LOL_WQ backlog: size=" << _workItems.size() << " avail=" << _threadsAvailable << " threads=" << _workerThreads.size() << _lolLog().endLog;
++			}
++
+ 			// if there are no threads available to perform the work AND we have less than the
+ 			// maximum number of worker threads currently active, spawn a temporary worker thread.
+ 			if (_threadsAvailable == 0 && _workerThreads.size() < maximumThreads()) {
+diff --git a/scripts/generate-rpc-wrappers.py b/scripts/generate-rpc-wrappers.py
+index 1068426..83de766 100755
+--- a/scripts/generate-rpc-wrappers.py
++++ b/scripts/generate-rpc-wrappers.py
+@@ -628,6 +628,24 @@ calls = [
+ 		('retval', 'uint32_t'),
+ 	], XNU_BSD_TRAP_CALL | XNU_TRAP_NO_DTAPE_DEF | ALLOW_INTERRUPTIONS),
+ 
++	#
++	# fileport calls
++	#
++
++	# Wraps a descriptor in a port the caller can hand to another task, and
++	# unwraps one again on the receiving side.
++	('fileport_makeport', [
++		('fd', '@fd'),
++	], [
++		('port_name', 'uint32_t'),
++	]),
++
++	('fileport_makefd', [
++		('port_name', 'uint32_t'),
++	], [
++		('fd', '@fd'),
++	]),
++
+ 	#
+ 	# debug calls
+ 	#
+diff --git a/src/call.cpp b/src/call.cpp
+index 7df0056..af01b38 100644
+--- a/src/call.cpp
++++ b/src/call.cpp
+@@ -402,8 +402,10 @@ void DarlingServer::Call::Checkin::processCall() {
+ 	if (auto thread = _thread.lock()) {
+ 		if (auto process = thread->process()) {
+ 			// the process needs to know when the checkin occurs, in case it has a pending replacement
+-			// and also to notify its parent about when the fork is complete
+-			process->notifyCheckin(static_cast<Process::Architecture>(_header.architecture));
++			// and also to notify its parent about when the fork is complete.
++			// it also needs to know WHICH thread checked in: every thread checks in, but only the
++			// main thread's checkin means "this process has arrived".
++			process->notifyCheckin(static_cast<Process::Architecture>(_header.architecture), thread->nsid());
+ 		} else {
+ 			code = -ESRCH;
+ 		}
+@@ -705,6 +707,40 @@ void DarlingServer::Call::MkTimerCreate::processCall() {
+ 	_sendReply(0, dtape_mk_timer_create());
+ };
+ 
++void DarlingServer::Call::FileportMakeport::processCall() {
++	// The port takes over the descriptor, so this call must stop owning it.
++	uint32_t name = dtape_fileport_makeport(_body.fd);
++
++	if (name == 0) {
++		_sendReply(-EINVAL, 0);
++		return;
++	}
++
++	_body.fd = -1;
++
++	_sendReply(0, name);
++};
++
++void DarlingServer::Call::FileportMakefd::processCall() {
++	int fd = dtape_fileport_makefd(_body.port_name);
++
++	if (fd < 0) {
++		_sendReply(-EINVAL, -1);
++		return;
++	}
++
++	// The port keeps its descriptor; what goes back to the caller is a copy of
++	// it, and the reply owns that copy.
++	fd = dup(fd);
++
++	if (fd < 0) {
++		_sendReply(-errno, -1);
++		return;
++	}
++
++	_sendReply(0, fd);
++};
++
+ void DarlingServer::Call::PthreadKill::processCall() {
+ 	int code = 0;
+ 
+diff --git a/src/kqchan.cpp b/src/kqchan.cpp
+index 1597a8c..cf210d7 100644
+--- a/src/kqchan.cpp
++++ b/src/kqchan.cpp
+@@ -108,6 +108,7 @@ int DarlingServer::Kqchan::setup() {
+ 			self->_canSend = self->_outbox.sendMany(self->_socket->fd());
+ 			riotKqTrace('O', self->_debugID, self->_socket->fd(), self->_canSend);
+ 		} while (self->_canSend && !self->_outbox.empty());
++
+ 	});
+ 
+ 	_monitor = std::make_shared<Monitor>(_socket, Monitor::Event::Readable | Monitor::Event::Writable | Monitor::Event::HangUp, true, false, [weakThis](std::shared_ptr<Monitor> monitor, Monitor::Event event) {
+@@ -399,6 +400,8 @@ void DarlingServer::Kqchan::MachPort::_read(uint64_t defaultBuffer, uint64_t def
+ 	auto maybeThread = threadRegistry().lookupEntryByNSID(nstid);
+ 
+ 	if (!maybeThread) {
++		// LOL_KQ: temporary, revert before committing.
++		kqchanMachPortLog.error() << "LOL_KQ " << this << " NO THREAD for nstid " << nstid << "; read will never be answered" << kqchanMachPortLog.endLog;
+ 		throw std::runtime_error("No thread for Mach port kqchan read?");
+ 	}
+ 
+diff --git a/src/message.cpp b/src/message.cpp
+index a7f5a94..7f8553f 100644
+--- a/src/message.cpp
++++ b/src/message.cpp
+@@ -590,9 +590,21 @@ bool DarlingServer::MessageQueue::sendMany(int socket) {
+ 				break;
+ 			} else if (errno == EINTR) {
+ 				ret = 0;
+-			} else if (errno == EPIPE || errno == ECONNREFUSED || errno == ENOENT) {
++			} else if (errno == EPIPE || errno == ECONNREFUSED || errno == ECONNRESET || errno == ENOTCONN) {
+ 				// this means that peer of the first message we tried to send has died.
+ 				// we'll just drop that message and try the others.
++				//
++				// ENOTCONN belongs in this list because our socket is an unconnected
++				// datagram socket (see Server::Server()), so it is what the kernel
++				// reports when a message carries no destination address at all - which
++				// is precisely what the loop above produces when a message's address is
++				// empty. Such a message can never be delivered to anyone, so it has to
++				// be dropped like any other undeliverable one. Letting it fall through
++				// to the throw below was fatal out of all proportion to the problem:
++				// sendMany() is called from the server's main loop with nothing to catch
++				// it, so a single addressless message terminated the whole server and
++				// with it every process in the prefix, which were then left spinning on
++				// RPCs that would never be answered again.
+ 				_messages.pop_front();
+ 				ret = 0;
+ 			} else {
+diff --git a/src/process.cpp b/src/process.cpp
+index 4faec1d..b20522f 100644
+--- a/src/process.cpp
++++ b/src/process.cpp
+@@ -326,10 +326,14 @@ bool DarlingServer::Process::writeMemory(uintptr_t remoteAddress, const void* lo
+ 	return _readOrWriteMemory(true, remoteAddress, const_cast<void*>(localBuffer), length, errorCode);
+ };
+ 
+-void DarlingServer::Process::notifyCheckin(Architecture architecture) {
++void DarlingServer::Process::notifyCheckin(Architecture architecture, pid_t checkinThreadNSID) {
+ 	std::unique_lock lock(_rwlock);
+ 
+ 	bool didExec = _pendingReplacement;
++	// Every thread checks in, not just the first one. Only the main thread's checkin
++	// means the process itself has arrived, so only that one may wake up a parent
++	// sitting in fork_wait_for_child.
++	bool isProcessCheckin = checkinThreadNSID == _nspid;
+ 
+ 	if (didExec) {
+ 		// exec case
+@@ -414,26 +418,29 @@ void DarlingServer::Process::notifyCheckin(Architecture architecture) {
+ 	if (didExec) {
+ 		// notify listeners that we have exec'd (i.e. been replaced)
+ 		_notifyListeningKqchannels(NOTE_EXEC, 0);
+-	} else {
++	} else if (isProcessCheckin) {
+ 		// notify the parent process (if we have one) that we've arrived
+ 		if (auto parent = _parentProcess.lock()) {
+-			/* darling-lol: the parent may already be tearing down (its
+-			 * fork-wait semaphore destroyed and nullified in
+-			 * notifyDead/kernelAsync, or across exec). A late checkin
+-			 * used to up the dead/NULL semaphore -> SIGSEGV *in
+-			 * darlingserver*, killing the whole container whenever a
+-			 * child (e.g. a Chromium helper) checked in after its
+-			 * parent died. Take the parent's lock and skip when gone. */
+-			std::unique_lock parentLock(parent->_rwlock);
+-			if (parent->_dtapeForkWaitSemaphore != nullptr) {
+-				dtape_semaphore_up(parent->_dtapeForkWaitSemaphore);
+-			}
+-			parentLock.unlock();
++			parent->_notifyForkWaiter();
+ 			parent->_notifyListeningKqchannels(NOTE_FORK, nsid());
+ 		}
+ 	}
+ };
+ 
++void DarlingServer::Process::_notifyForkWaiter() {
++	std::shared_lock lock(_rwlock);
++
++	// The fork-wait semaphore is momentarily null while a process is being replaced by
++	// exec, and permanently null once it has started dying. Neither is a state in which
++	// anyone can be waiting for a child, so there is nothing to wake up - and dereferencing
++	// the null semaphore takes the whole server down with it.
++	if (!_dtapeForkWaitSemaphore) {
++		return;
++	}
++
++	dtape_semaphore_up(_dtapeForkWaitSemaphore);
++};
++
+ void DarlingServer::Process::setPendingReplacement() {
+ 	std::unique_lock lock(_rwlock);
+ 
+@@ -920,9 +927,15 @@ void DarlingServer::Process::notifyDead() {
+ 	// dtape_thread_release needs a microthread context, so we call it within a kernel microthread
+ 	// also destroy the fork-wait semaphore here
+ 	Thread::kernelAsync([self = shared_from_this()]() {
+-		if (self->_dtapeForkWaitSemaphore) {
+-			dtape_semaphore_destroy(self->_dtapeForkWaitSemaphore);
+-			self->_dtapeForkWaitSemaphore = nullptr;
++		{
++			// under the lock, so that a child checking in concurrently either sees a live
++			// semaphore or sees none at all
++			std::unique_lock lock(self->_rwlock);
++
++			if (self->_dtapeForkWaitSemaphore) {
++				dtape_semaphore_destroy(self->_dtapeForkWaitSemaphore);
++				self->_dtapeForkWaitSemaphore = nullptr;
++			}
+ 		}
+ 		dtape_task_release(self->_dtapeTask);
+ 		self->_dtapeTask = nullptr;
+diff --git a/src/thread.cpp b/src/thread.cpp
+index 5563ad9..79aa098 100644
+--- a/src/thread.cpp
++++ b/src/thread.cpp
+@@ -401,6 +401,8 @@ void DarlingServer::Thread::doWork() {
+ 
+ 	if (_deferralState != DeferralState::NotDeferred) {
+ 		microthreadLog.debug() << _tid << "(" << _nstid << "): execution was deferred" << microthreadLog.endLog;
++		// LOL_RES: temporary, revert before committing.
++		threadLog.error() << "LOL_RES doWork deferred for " << _tid << "(" << _nstid << ")" << threadLog.endLog;
+ 		_deferralState = DeferralState::DeferredPending;
+ 		_rwlock.unlock();
+ 		return;
+@@ -409,6 +411,8 @@ void DarlingServer::Thread::doWork() {
+ 	if (_running) {
+ 		// this is probably an error
+ 		microthreadLog.warning() << _tid << "(" << _nstid << "): attempt to re-run already running microthread on another thread" << microthreadLog.endLog;
++		// LOL_RES: temporary, revert before committing.
++		threadLog.error() << "LOL_RES doWork DROPPED (already running) for " << _tid << "(" << _nstid << ")" << threadLog.endLog;
+ 		_rwlock.unlock();
+ 		return;
+ 	}
+@@ -561,6 +565,14 @@ doneWorking:
+ 		_rwlock.unlock();
+ 		notifyDead();
+ 	} else {
++		// if we suspended with a resume already pending, make sure we run again
++		if (_needsReschedule) {
++			_needsReschedule = false;
++			if (!_terminating && !_dead) {
++				Server::sharedInstance().scheduleThread(shared_from_this());
++			}
++		}
++
+ 		// if we have any pending interrupts, schedule them to be processed now
+ 		// (we've just finished or suspended a call, so now's the time to handle interrupts)
+ 		if (!_terminating && !_dead && !_pendingInterrupts.empty()) {
+@@ -598,6 +610,15 @@ void DarlingServer::Thread::suspend(std::function<void()> continuationCallback,
+ 
+ 	_rwlock.lock();
+ 	_suspended = true;
++	if (_pendingResume) {
++		// We were woken between XNU marking us as waiting and us actually parking.
++		// We still have to park (we're running on the worker thread's stack and have
++		// to hand it back), but doWork() has to schedule us again right afterwards.
++		_pendingResume = false;
++		_needsReschedule = true;
++		// LOL_RES: temporary, revert before committing.
++		threadLog.error() << "LOL_RES suspend consumed early resume for " << _tid << "(" << _nstid << ")" << threadLog.endLog;
++	}
+ 	_rwlock.unlock();
+ 
+ 	unlockMeWhenSuspending = unlockMe;
+@@ -640,9 +661,14 @@ void DarlingServer::Thread::suspend(std::function<void()> continuationCallback,
+ 
+ void DarlingServer::Thread::resume() {
+ 	{
+-		std::shared_lock lock(_rwlock);
++		std::unique_lock lock(_rwlock);
+ 		if (!_suspended) {
+-			// maybe we should throw an error here?
++			// XNU considers this thread to be waiting, but it has not parked itself
++			// yet: it is on its way into suspend() and has already dropped the waitq
++			// lock that would otherwise have serialized us against it. Record the
++			// wakeup so suspend() can hand it back to the work queue; dropping it
++			// here would park the microthread forever.
++			_pendingResume = true;
+ 			return;
+ 		}
+ 	}
+@@ -835,6 +861,7 @@ static void kernelAsyncRunnerThreadWorker(bool permanent, std::shared_ptr<Darlin
+ 		auto func = kernelAsyncRunnerQueue.front();
+ 		kernelAsyncRunnerQueue.pop();
+ 
++
+ 		libsimple_lock_unlock(&kernelAsyncRunnerQueueLock);
+ 
+ 		// perform the work
+@@ -854,6 +881,10 @@ void DarlingServer::Thread::kernelAsync(std::function<void()> fn) {
+ 
+ 	libsimple_lock_lock(&kernelAsyncRunnerQueueLock);
+ 	kernelAsyncRunnerQueue.push(fn);
++	// LOL_KA: temporary, revert before committing.
++	if (kernelAsyncRunnerQueue.size() > 4) {
++		threadLog.error() << "LOL_KA backlog (queued=" << kernelAsyncRunnerQueue.size() << " avail=" << kernelAsyncRunnersAvailable << ")" << threadLog.endLog;
++	}
+ 	if (kernelAsyncRunnersAvailable == 0) {
+ 		// we need to get some work done, but there are no workers available.
+ 		// if we have less workers than the max permanent number of workers,
