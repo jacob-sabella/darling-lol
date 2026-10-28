@@ -255,9 +255,45 @@ answers `hw.ncpu`/`kern.ostype`/`kern.osrelease` through the duct-tape layer, gu
 and `defaults` run, and `darling shutdown` exits cleanly. So the merged syscall, Mach and
 Foundation plumbing works at runtime, not just at link time.
 
-**Still not verified.** Nothing graphical, and nothing about the client. No X11/AppKit window was
-opened, so the rendering and font work — the largest contested area, and the whole point of
-upstream's tree — is untested here beyond compiling and linking. The game is not installed.
+**Upstream's own probes.** Four of darling-lol's standalone probes in `tools/` were built
+against this build's frameworks and run in that container:
+
+| probe | result |
+|---|---|
+| `riot-appkit-pump-check` | **pass** — 200 events, 200 callbacks, 0 late polls, 8.9 ms |
+| `riot-window-decorations-check` | **pass** — all 10 style-mask cases match, X11 `setStyleMask` live |
+| `riot-window-layout-check` | **pass** — view/layer resize, native resize order, sibling resize, `setFrameSize:` hook, full layout |
+| `riot-coretext-font-list-check` | **fail** — `localized font name is the family` |
+
+So AppKit's event pump, the X11 window backend and NSView/NSWindow layout all work at runtime.
+
+The CoreText failure is a real gap, measured rather than guessed: of 326 host font families, 49
+do not instantiate to themselves and silently fall back to another family. Nine of those are
+bitmap-only fonts (`arabic24.pcf.gz` and friends), where falling back is correct and the probe's
+blanket assertion is simply too strict on a Linux host. The other **40 are outline TrueType
+fonts that should have loaded** — almost all Nerd Font variants (`MesloLG*`, `FantasqueSansM*`,
+each in Font/Mono/Propo flavours) plus Adwaita Mono and Adwaita Sans. The pattern suggests
+families whose fontconfig-reported name does not match the name FreeType reads back from the
+font, so enumeration offers a name that lookup cannot resolve.
+
+Whether the merge caused this is **not** established. The `FT_FACE_FLAG_SCALABLE` rejection that
+logs "FreeType font face is not scalable" is in the pinned base, present on all three sides, and
+both the enumeration and the loading come from this tree's side of the font stack — so if
+darling-lol's font path handled these families better, forcing that group here is what lost it.
+The cheap comparison was not available: the Darling installed at `/usr/local` on this machine
+predates its own working tree and cannot even link the probe (no
+`CTFontDescriptorCreateMatchingFontDescriptor`). Settling it needs a pristine darling-lol build
+to run the same probe against.
+
+One other observation: after a probe exits, `darling shutdown` sometimes logs
+`semaphore_timedwait failed (internally): -111`, `dserver_rpc_interrupt_enter failed with code
+-111` and a `LOLSIGFAIL` backtrace. The container still shuts down and the session exits 0, but
+the teardown path is not clean.
+
+**Still not verified.** Nothing about the client itself, and no pixels were compared: the probes
+exercise AppKit geometry, event delivery and window style, not rendered output. The game is not
+installed, so the IOSurface/Chromium compositing path that the whole project turns on is still
+untested.
 
 **A note on the rootless install path.** `scripts/nix-idle.py` is fail-closed and cannot succeed
 when run on the host: it raises on any process whose `/proc/<pid>/maps` it cannot read, and
