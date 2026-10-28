@@ -88,10 +88,27 @@ index d0141aa..6c481a0 100644
  knote_disable(struct filter *filt, struct knote *kn)
  {
 diff --git a/src/common/kqueue.c b/src/common/kqueue.c
-index f05576d..610b573 100644
+index f05576d..5df7936 100644
 --- a/src/common/kqueue.c
 +++ b/src/common/kqueue.c
-@@ -134,10 +134,10 @@ static void kqueue_free_cb(int kqfd, void* kqptr, void* private) {
+@@ -23,8 +23,6 @@
+ #include <string.h>
+ 
+ #include "private.h"
+-#include <darling/emulation/common/simple.h>
+-#define LOLKQ(...) do { } while (0)
+ 
+ #ifdef DARLING
+ #include "../darling/listenregistry.h"
+@@ -115,7 +113,6 @@ kqueue_cmp(struct kqueue *a, struct kqueue *b)
+ void kqueue_cleanup(struct kqueue* kq)
+ {
+     struct knote *next, *tmp;
+-    if (kq->kq_waiters) return;
+     for (next = kq->kq_tofree.lh_first; next != NULL; next = tmp)
+     {
+         tmp = next->kn_entries2free.le_next;
+@@ -134,10 +131,10 @@ static void kqueue_free_cb(int kqfd, void* kqptr, void* private) {
  void
  kqueue_free(struct kqueue *kq)
  {
@@ -103,7 +120,7 @@ index f05576d..610b573 100644
      kqueue_cleanup(kq);
      kqops.kqueue_free(kq);
      free(kq);
-@@ -298,6 +298,12 @@ kqueue_dup(int oldfd, int newfd)
+@@ -298,6 +295,12 @@ kqueue_dup(int oldfd, int newfd)
  #endif
  }
  
@@ -116,7 +133,7 @@ index f05576d..610b573 100644
  static void _kqueue_close_atfork_cb(int kqfd, void* kqptr, void* private)
  {
  	struct kqueue* kq = (struct kqueue*) kqptr;
-@@ -314,7 +320,9 @@ void VISIBLE kqueue_atfork(void)
+@@ -314,7 +317,9 @@ void VISIBLE kqueue_atfork(void)
      {
          // Mutexes are not valid after a fork, reset it to unlocked state
          pthread_mutex_init(&kq_mtx, NULL);
@@ -125,6 +142,14 @@ index f05576d..610b573 100644
 +        kqueue_in_atfork = 0;
      }
  }
+ 
+@@ -333,7 +338,6 @@ void kqueue_delref(struct kqueue *kq)
+ int VISIBLE
+ kqueue_impl(void)
+ {
+-	LOLKQ("kqueue_impl enter\n");
+ 	struct kqueue *kq;
+     struct kqueue *tmp;
  
 diff --git a/src/common/private.h b/src/common/private.h
 index e7a0841..acb946a 100644
@@ -140,13 +165,15 @@ index e7a0841..acb946a 100644
  int  knote_disable(struct filter *, struct knote *);
  #define knote_get_filter(knt) &((knt)->kn_kq->kq_filt[(knt)->kev.filter])
 diff --git a/src/linux/machport.c b/src/linux/machport.c
-index 1e99023..3cd4f00 100644
+index 1e99023..614018f 100644
 --- a/src/linux/machport.c
 +++ b/src/linux/machport.c
-@@ -36,6 +36,14 @@
+@@ -34,8 +34,14 @@
  
- /* Keep the Mach-port path free of per-event diagnostic I/O. */
- #define M58MP(...) do { } while (0)
+ #include "private.h"
+ 
+-/* Keep the Mach-port path free of per-event diagnostic I/O. */
+-#define M58MP(...) do { } while (0)
 +/* LOL_KQMP: temporary, revert before committing. */
 +static int lol_kqmp(void) {
 +    static int on = -1;
@@ -158,28 +185,52 @@ index 1e99023..3cd4f00 100644
  
  int
  evfilt_machport_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
-@@ -131,10 +139,12 @@ evfilt_machport_knote_create(struct filter *filt, struct knote *kn)
+@@ -48,16 +54,13 @@ evfilt_machport_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
+ 
+     epoll_event_dump(ev);
+     kevent_int_to_64(&src->kev, dst);
+-    M58MP("copyout fd=%d\n", src->kdata.kn_dupfd);
+ 
+ 	// first, read the notification
+ 	rv = recv(src->kdata.kn_dupfd, &notification, sizeof(notification), 0);
+ 	if (rv < 0) {
+-		M58MP("copyout notif-recv FAILED fd=%d errno=%d\n", src->kdata.kn_dupfd, errno);
+ 		dbg_printf("evfilt_machport_copyout() reading notification failed: %d (%s)", errno, strerror(errno));
+ 		return -1;
+ 	}
+-	M58MP("copyout notif fd=%d rv=%d num=0x%x\n", src->kdata.kn_dupfd, rv, notification.header.number);
+ 
+ 	if (notification.header.number != dserver_kqchan_msgnum_notification) {
+ 		dbg_puts("evfilt_machport_copyout() read invalid notification");
+@@ -130,24 +133,21 @@ evfilt_machport_knote_create(struct filter *filt, struct knote *kn)
+ 
  	int status = _dserver_rpc_kqchan_mach_port_open_4libkqueue(port, (void*)kn->kev.ext[0], kn->kev.ext[1], kn->kev.fflags, &kn->kdata.kn_dupfd);
  	if (status < 0) {
- 		M58MP("create open FAILED port=%d status=%d\n", port, status);
+-		M58MP("create open FAILED port=%d status=%d\n", port, status);
 +		LOL_KQMP("create port=%d OPEN FAILED status=%d", port, status);
  		dbg_printf("evfilt_machport_open: %s", strerror(-status));
  		return (-1);
  	}
- 	M58MP("create open port=%d fd=%d events=0x%x\n", port, kn->kdata.kn_dupfd, ev.events);
+-	M58MP("create open port=%d fd=%d events=0x%x\n", port, kn->kdata.kn_dupfd, ev.events);
 +	LOL_KQMP("create port=%d fd=%d epfd=%d flags=0x%x", port, kn->kdata.kn_dupfd, kn->kn_epollfd, (unsigned)kn->kev.flags);
  
  	dbg_printf("evfilt_machport_open: listening to FD %d for events %d", kn->kdata.kn_dupfd, ev.events);
  
-@@ -142,6 +152,7 @@ evfilt_machport_knote_create(struct filter *filt, struct knote *kn)
+     fcntl(kn->kdata.kn_dupfd, F_SETFD, FD_CLOEXEC);
  
      if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_ADD, kn->kdata.kn_dupfd, &ev) < 0) {
-         M58MP("create epoll_add FAILED epfd=%d fd=%d errno=%d\n", kn->kn_epollfd, kn->kdata.kn_dupfd, errno);
+-        M58MP("create epoll_add FAILED epfd=%d fd=%d errno=%d\n", kn->kn_epollfd, kn->kdata.kn_dupfd, errno);
 +        LOL_KQMP("create port=%d fd=%d epfd=%d EPOLL_ADD FAILED errno=%d", port, kn->kdata.kn_dupfd, kn->kn_epollfd, errno);
          dbg_printf("epoll_ctl(2): %s", strerror(errno));
-         (void) __close_for_kqueue(kn->kdata.kn_dupfd);
-         kn->kdata.kn_dupfd = -1;
-@@ -159,6 +170,7 @@ evfilt_machport_knote_modify(struct filter *filt, struct knote *kn,
+-        (void) __close_for_kqueue(kn->kdata.kn_dupfd);
+-        kn->kdata.kn_dupfd = -1;
+         return (-1);
+     }
+-    M58MP("create epoll_add OK epfd=%d fd=%d\n", kn->kn_epollfd, kn->kdata.kn_dupfd);
+     return 0;
+ }
+ 
+@@ -159,6 +159,7 @@ evfilt_machport_knote_modify(struct filter *filt, struct knote *kn,
  	dserver_kqchan_reply_mach_port_modify_t reply = {0};
  	int rv;
  
@@ -187,7 +238,7 @@ index 1e99023..3cd4f00 100644
  	call.header.number = dserver_kqchan_msgnum_mach_port_modify;
  	call.header.pid = getpid();
  	call.header.tid = THREAD_ID;
-@@ -195,11 +207,18 @@ evfilt_machport_knote_modify(struct filter *filt, struct knote *kn,
+@@ -195,11 +196,18 @@ evfilt_machport_knote_modify(struct filter *filt, struct knote *kn,
  int
  evfilt_machport_knote_delete(struct filter *filt, struct knote *kn)
  {
@@ -208,7 +259,7 @@ index 1e99023..3cd4f00 100644
          }
      }
  
-@@ -220,9 +239,11 @@ evfilt_machport_knote_enable(struct filter *filt, struct knote *kn)
+@@ -220,9 +228,11 @@ evfilt_machport_knote_enable(struct filter *filt, struct knote *kn)
  	dbg_printf("enabling machport knote with ID=%llu for events %d", kn->kev.ident, ev.events);
  
  	if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_ADD, kn->kdata.kn_dupfd, &ev) < 0) {
@@ -220,7 +271,7 @@ index 1e99023..3cd4f00 100644
  	return (0);
  }
  
-@@ -230,7 +251,9 @@ int
+@@ -230,7 +240,9 @@ int
  evfilt_machport_knote_disable(struct filter *filt, struct knote *kn)
  {
  	dbg_printf("disable machport knote with ID=%llu", kn->kev.ident);
@@ -231,7 +282,7 @@ index 1e99023..3cd4f00 100644
  		return (-1);
  	}
 diff --git a/src/linux/proc.c b/src/linux/proc.c
-index 9a70d77..ff774ad 100644
+index 9a70d77..0a43716 100644
 --- a/src/linux/proc.c
 +++ b/src/linux/proc.c
 @@ -253,10 +253,16 @@ evfilt_proc_knote_modify(struct filter *filt, struct knote *kn,
@@ -252,3 +303,8 @@ index 9a70d77..ff774ad 100644
          }
      }
  
+@@ -302,3 +308,4 @@ const struct filter evfilt_proc = {
+     evfilt_proc_knote_enable,
+     evfilt_proc_knote_disable,         
+ };
++

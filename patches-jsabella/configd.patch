@@ -1,5 +1,5 @@
 diff --git a/darling/src/SystemConfiguration.fproj/stubs.c b/darling/src/SystemConfiguration.fproj/stubs.c
-index 3299e6a..345c3de 100644
+index 3299e6a..5f803b6 100644
 --- a/darling/src/SystemConfiguration.fproj/stubs.c
 +++ b/darling/src/SystemConfiguration.fproj/stubs.c
 @@ -1,13 +1,64 @@
@@ -75,7 +75,218 @@ index 3299e6a..345c3de 100644
  
  #define STUB() printf("STUB %s\n", __func__)
  
-@@ -254,104 +305,46 @@ CFTypeID SCDynamicStoreGetTypeID(void)
+@@ -59,348 +110,117 @@ SCNetworkConnectionRef SCNetworkConnectionCreateWithServiceID(CFAllocatorRef all
+ 	return NULL;
+ }
+ 
+-/*
+- * darling-lol: minimal but FUNCTIONAL network reachability.
+- *
+- * Previously every SCNetworkReachability* entry point was a stub:
+- * CreateWithAddress/Name returned NULL and GetFlags returned garbage.
+- * Chromium's network_change_notifier_mac / dns_config_service start by
+- * creating a reachability object and calling GetFlags; with NULL/garbage
+- * it took a failing path (and `dns_config_service_posix ... watch failed
+- * to start` / `Could not get initial network connection type` follow).
+- *
+- * Darling has no reachability subsystem, but the honest answer for a host
+- * that has a working network stack is "reachable, direct". We return a
+- * real heap object so callers can schedule it, and GetFlags reports
+- * kSCNetworkReachabilityFlagsReachable. If the host is genuinely offline
+- * the caller finds out when its connect() fails; this only removes the
+- * false negative at startup.
+- */
+-struct __SCNetworkReachability {
+-	CFRuntimeBase _base;
+-	CFStringRef name;
+-	struct sockaddr_storage addr;
+-	Boolean hasAddr;
+-};
+-
+-static void _reachabilityRelease(CFTypeRef cf)
+-{
+-	struct __SCNetworkReachability* ref = (struct __SCNetworkReachability*) cf;
+-	if (ref->name != NULL)
+-		CFRelease(ref->name);
+-}
+-
+-static CFStringRef _reachabilityCopyDescription(CFTypeRef cf)
+-{
+-	return CFSTR("SCNetworkReachability");
+-}
+-
+-static const CFRuntimeClass _reachabilityClass = {
+-	0,
+-	"SCNetworkReachability",
+-	NULL, /* init */
+-	NULL, /* copy */
+-	_reachabilityRelease,
+-	NULL, /* equal */
+-	NULL, /* hash */
+-	NULL, /* copyFormattingDesc */
+-	_reachabilityCopyDescription
+-};
+-
+-static SCNetworkReachabilityRef _reachabilityCreate(CFAllocatorRef allocator, const struct sockaddr* addr)
+-{
+-	static CFTypeID classID = _kCFRuntimeNotATypeID;
+-	if (classID == _kCFRuntimeNotATypeID)
+-		classID = _CFRuntimeRegisterClass(&_reachabilityClass);
+-
+-	struct __SCNetworkReachability* ref = (struct __SCNetworkReachability*)
+-		_CFRuntimeCreateInstance(allocator, classID,
+-			sizeof(struct __SCNetworkReachability) - sizeof(CFRuntimeBase), NULL);
+-	if (ref == NULL)
+-		return NULL;
+-
+-	if (addr != NULL) {
+-		size_t len = sizeof(struct sockaddr_in);
+-		if (addr->sa_family == AF_INET6)
+-			len = sizeof(struct sockaddr_in6);
+-		if (len > sizeof(ref->addr))
+-			len = sizeof(ref->addr);
+-		memcpy(&ref->addr, addr, len);
+-		ref->hasAddr = true;
+-	}
+-	return (SCNetworkReachabilityRef) ref;
+-}
+-
+ CFTypeID SCNetworkReachabilityGetTypeID(void)
+ {
+-	/* darling-lol: return the real registered class id (some clients
+-	 * compare it and misbehave on 0). */
+-	static CFTypeID classID = _kCFRuntimeNotATypeID;
+-	if (classID == _kCFRuntimeNotATypeID)
+-		classID = _CFRuntimeRegisterClass(&_reachabilityClass);
+-	return classID;
++    STUB();
++	return 0;
+ }
+ 
+ Boolean SCNetworkReachabilityScheduleWithRunLoop(SCNetworkReachabilityRef ref, CFRunLoopRef rl, CFStringRef rlMode)
+ {
+-	/* No dynamic reachability changes to report; accepting the schedule
+-	 * (instead of failing) lets callers proceed to GetFlags. */
+-	return (ref != NULL) ? true : false;
++    STUB();
++	return 0;
+ }
+ 
+ Boolean SCNetworkReachabilityUnscheduleFromRunLoop(SCNetworkReachabilityRef ref, CFRunLoopRef rl, CFStringRef rlMode)
+ {
+-	return (ref != NULL) ? true : false;
++    STUB();
++	return 0;
+ }
+ 
+ Boolean SCNetworkReachabilitySetCallback(SCNetworkReachabilityRef target, SCNetworkReachabilityCallBack cb, SCNetworkReachabilityContext* ctxt)
+ {
+-	/* Accepted but never invoked (no change notifications implemented). */
+-	return (target != NULL) ? true : false;
++    STUB();
++	return 0;
+ }
+ 
+ Boolean SCNetworkReachabilityGetFlags(SCNetworkReachabilityRef target, SCNetworkReachabilityFlags* flags)
+ {
+-	if (target == NULL || flags == NULL)
+-		return false;
+-	/* Host has a network stack: report reachable + direct, not required. */
+-	*flags = kSCNetworkReachabilityFlagsReachable
+-		| kSCNetworkReachabilityFlagsTransientConnection
+-		| kSCNetworkReachabilityFlagsConnectionAutomatic;
+-	return true;
++    STUB();
++	return 0;
+ }
+ 
+ SCNetworkReachabilityRef SCNetworkReachabilityCreateWithName(CFAllocatorRef allocator, const char* nodeName)
+ {
+-	struct __SCNetworkReachability* ref = (struct __SCNetworkReachability*)
+-		_reachabilityCreate(allocator, NULL);
+-	if (ref != NULL && nodeName != NULL)
+-		ref->name = CFStringCreateWithCString(allocator, nodeName, kCFStringEncodingUTF8);
+-	return (SCNetworkReachabilityRef) ref;
++    STUB();
++	return NULL;
+ }
+ 
+ SCNetworkReachabilityRef SCNetworkReachabilityCreateWithAddressPair(CFAllocatorRef allocator, const struct sockaddr* localAddress, const struct sockaddr* remoteAddress)
+ {
+-	/* Local address is irrelevant to our answer; key off the remote. */
+-	return _reachabilityCreate(allocator, remoteAddress);
++    STUB();
++	return NULL;
+ }
+ 
+ SCNetworkReachabilityRef SCNetworkReachabilityCreateWithAddress(CFAllocatorRef allocator, const struct sockaddr* remoteAddress)
+ {
+-	return _reachabilityCreate(allocator, remoteAddress);
+-}
+-
+-/*
+- * darling-lol: minimal but FUNCTIONAL SCDynamicStore.
+- *
+- * Chromium's dns_config_service_posix (macOS) creates an SCDynamicStore,
+- * calls SCDynamicStoreSetNotificationKeys with the DNS/State keys, and
+- * schedules it -- that is how it "starts" its config watcher. All of
+- * these used to be STUBs returning NULL/FALSE, so the watcher could never
+- * start (`dns_config_service_posix.cc(137/147) ... watch failed to
+- * start`). We provide a real object and accept the notification setup;
+- * `CopyValue` reports "key absent" (NULL, never bogus) and the runloop
+- * source is a real never-firing source. No change callbacks are delivered
+- * (Darling has no configd store to watch), which is sufficient for startup.
+- * (Proxy values are served by the pre-existing SCDynamicStoreCopyProxies
+- * in stubs.cpp, untouched.)
+- */
+-struct __SCDynamicStore {
+-	CFRuntimeBase _base;
+-	CFStringRef name;
+-	CFArrayRef notificationKeys;
+-	CFArrayRef notificationPatterns;
+-	dispatch_queue_t queue;
+-	SCDynamicStoreCallBack callout;
+-	SCDynamicStoreContext context;
+-};
+-
+-static void _storeRelease(CFTypeRef cf)
+-{
+-	struct __SCDynamicStore* store = (struct __SCDynamicStore*) cf;
+-	if (store->name) CFRelease(store->name);
+-	if (store->notificationKeys) CFRelease(store->notificationKeys);
+-	if (store->notificationPatterns) CFRelease(store->notificationPatterns);
+-	if (store->context.release && store->context.info)
+-		store->context.release(store->context.info);
+-}
+-
+-static CFStringRef _storeCopyDescription(CFTypeRef cf)
+-{
+-	return CFSTR("SCDynamicStore");
+-}
+-
+-static const CFRuntimeClass _storeClass = {
+-	0,
+-	"SCDynamicStore",
+-	NULL, NULL,
+-	_storeRelease,
+-	NULL, NULL, NULL,
+-	_storeCopyDescription
+-};
+-
+-static CFTypeID _storeGetClassID(void)
+-{
+-	static CFTypeID id = _kCFRuntimeNotATypeID;
+-	if (id == _kCFRuntimeNotATypeID)
+-		id = _CFRuntimeRegisterClass(&_storeClass);
+-	return id;
+-}
+-
+-CFTypeID SCDynamicStoreGetTypeID(void)
+-{
+-	return _storeGetClassID();
++    STUB();
++	return NULL;
+ }
  
  CFStringRef SCDynamicStoreKeyCreateNetworkGlobalEntity(CFAllocatorRef allocator, CFStringRef domain, CFStringRef entity)
  {
@@ -203,7 +414,15 @@ index 3299e6a..345c3de 100644
  };
  
  CFStringRef SCDynamicStoreKeyCreate(CFAllocatorRef allocator, CFStringRef fmt, ...)
-@@ -365,22 +358,15 @@ CFStringRef SCDynamicStoreKeyCreate(CFAllocatorRef allocator, CFStringRef fmt, .
+ {
+-	if (fmt == NULL)
+-		return NULL;
+-	/* Best effort: return the format string itself when no args are
+-	 * readily available; callers only use these as dictionary keys. */
+-	return CFStringCreateCopy(allocator, fmt);
++	STUB();
++	return NULL;
+ }
  
  Boolean SCDynamicStoreSetDispatchQueue(SCDynamicStoreRef store, dispatch_queue_t queue)
  {
@@ -226,16 +445,38 @@ index 3299e6a..345c3de 100644
 -	s->notificationPatterns = patterns ? (CFArrayRef) CFRetain(patterns) : NULL;
 -	/* Accepted: we simply never fire callbacks (no configd to watch). */
 -	return TRUE;
+-}
+-
+-CFRunLoopSourceRef SCDynamicStoreCreateRunLoopSource(CFAllocatorRef allocator, SCDynamicStoreRef store, CFIndex order) {
+-	if (store == NULL)
+-		return NULL;
+-	/*
+-	 * darling-lol: return a real (never-firing) runloop source. Chromium's
+-	 * dns watcher does SCDynamicStoreCreateRunLoopSource + CFRunLoopAddSource;
+-	 * a NULL source left it with nothing to schedule ("watch failed to
+-	 * start") and risked a NULL deref/abort downstream. This dummy source
+-	 * satisfies scheduling; it never signals because Darling has no configd
+-	 * to deliver changes from.
+-	 */
+-	CFRunLoopSourceContext ctx;
+-	memset(&ctx, 0, sizeof(ctx));
+-	ctx.info = (void*) store;
+-	return CFRunLoopSourceCreate(allocator, order, &ctx);
 +	_SCSetLastError(kSCStatusNoStoreSession);
 +	STUB();
 +	return FALSE;
  }
  
- CFRunLoopSourceRef SCDynamicStoreCreateRunLoopSource(CFAllocatorRef allocator, SCDynamicStoreRef store, CFIndex order) {
-@@ -422,6 +408,31 @@ CFStringRef SCDynamicStoreKeyCreateHostNames(CFAllocatorRef allocator) {
+-
+ CFStringRef SCDynamicStoreKeyCreateComputerName(CFAllocatorRef allocator) {
+ 	STUB();
+ 	return NULL;
+@@ -422,39 +242,31 @@ CFStringRef SCDynamicStoreKeyCreateHostNames(CFAllocatorRef allocator) {
  };
  
  CFStringRef SCDynamicStoreKeyCreateNetworkInterfaceEntity(CFAllocatorRef allocator, CFStringRef domain, CFStringRef ifname, CFStringRef entity) {
+-	STUB();
+-	return NULL;
 +	// As above: string formatting only.
 +	if (domain == NULL) {
 +		_SCSetLastError(kSCStatusInvalidArgument);
@@ -254,18 +495,49 @@ index 3299e6a..345c3de 100644
 +	return CFStringCreateWithFormat(allocator, NULL, CFSTR("%@/%@/%@/%@/%@"),
 +	                                domain, kSCCompNetwork, kSCCompInterface,
 +	                                ifname, entity);
-+};
-+
+ };
+ 
+-const char* SCErrorString(int status) {
+-	/* Minimal Apple-compatible mapping (full table lives in SCD.c,
+-	 * which is not compiled into Darling's stub framework). Callers
+-	 * such as Chromium's network-change notifier only log the result,
+-	 * so a generic fallback is acceptable for unknown codes. */
+-	static const struct { int status; const char *message; } msgs[] = {
+-		{ kSCStatusOK,			"Success!" },
+-		{ kSCStatusFailed,		"Failed!" },
+-		{ kSCStatusInvalidArgument,	"Invalid argument" },
+-		{ kSCStatusAccessError,		"Permission denied" },
+-		{ kSCStatusNoKey,		"No such key" },
+-		{ kSCStatusKeyExists,		"Key already defined" },
+-		{ kSCStatusLocked,		"Lock already held" },
+-		{ kSCStatusNeedLock,		"Lock required for this operation" },
+-		{ kSCStatusNoStoreSession,	"Configuration daemon session not active" },
+-		{ kSCStatusNoStoreServer,	"Configuration daemon not (no longer) available" },
+-		{ kSCStatusNotifierActive,	"Notifier is currently active" },
+-		{ kSCStatusNoPrefsSession,	"Preference session not active" },
+-		{ kSCStatusPrefsBusy,		"Preferences update currently in progress" },
+-		{ kSCStatusNoConfigFile,	"Configuration file not found" },
+-		{ kSCStatusNoLink,		"No such link" },
+-		{ kSCStatusStale,		"Write attempted on stale version of object" },
+-	};
+-	unsigned i;
+-	for (i = 0; i < sizeof(msgs)/sizeof(msgs[0]); i++) {
+-		if (msgs[i].status == status)
+-			return msgs[i].message;
+-	}
+-	if (status > 0)
+-		return strerror(status);
+-	return "Unknown error";
 +CFRunLoopSourceRef SCDynamicStoreCreateRunLoopSource(CFAllocatorRef allocator, SCDynamicStoreRef store, CFIndex order) {
 +	// There is no session to watch, because SCDynamicStoreCreate() is still a
 +	// stub. Report that rather than returning a source that would never fire.
 +	_SCSetLastError(store == NULL ? kSCStatusInvalidArgument
 +	                              : kSCStatusNoStoreSession);
- 	STUB();
- 	return NULL;
++	STUB();
++	return NULL;
  };
 diff --git a/darling/src/dnsinfo/dnsinfo.c b/darling/src/dnsinfo/dnsinfo.c
-index d6b4a1a..55da72d 100644
+index d6b4a1a..963c9bc 100644
 --- a/darling/src/dnsinfo/dnsinfo.c
 +++ b/darling/src/dnsinfo/dnsinfo.c
 @@ -7,6 +7,9 @@
@@ -302,7 +574,8 @@ index d6b4a1a..55da72d 100644
  }
  
  dns_config_t *
- dns_configuration_copy()
+-dns_configuration_copy()
++dns_configuration_copy		()
  {
 -    FILE *file = fopen("/etc/resolv.conf", "r");
 -    if (!file) return NULL;
@@ -532,7 +805,8 @@ index d6b4a1a..55da72d 100644
  }
  
  void
- dns_configuration_free(dns_config_t *config)
+-dns_configuration_free(dns_config_t *config)
++dns_configuration_free		(dns_config_t	*config)
  {
 -    if (!config) return;
 -    for (int i = 0; i < config->n_resolver; ++i) {

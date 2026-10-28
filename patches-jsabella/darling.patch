@@ -33,13 +33,31 @@ index 374f43528..a69de8040 100644
  	add_dependencies(${target} ${APPLE_TARGET_TRIPLET_PRIMARY}-ld)
  
 diff --git a/src/CoreAudio/AudioToolbox/AudioConverter.cpp b/src/CoreAudio/AudioToolbox/AudioConverter.cpp
-index 5672fcba1..b9c6faf6a 100644
+index 5672fcba1..299121259 100644
 --- a/src/CoreAudio/AudioToolbox/AudioConverter.cpp
 +++ b/src/CoreAudio/AudioToolbox/AudioConverter.cpp
-@@ -37,18 +37,12 @@ static bool audioTrace() {
-     return enabled;
- }
+@@ -19,39 +19,18 @@ along with Darling.  If not, see <http://www.gnu.org/licenses/>.
  
+ #include "AudioConverter.h"
+ #include "AudioConverterImpl.h"
+-#include "../AudioTrace.h"
+ #include <CarbonCore/MacErrors.h>
+ #include <stdexcept>
+ #include <cstring>
+-#include <cstdlib>
+-#include <cstdio>
+-#include <mutex>
+-#include <unordered_set>
+-
+-// Validate opaque-handle ownership before dereferencing a disposal argument.
+-static std::mutex converterMutex;
+-static std::unordered_set<AudioConverterRef> liveConverters;
+-
+-static bool audioTrace() {
+-    static const bool enabled = rclolAudioTraceEnabled();
+-    return enabled;
+-}
+-
 +#include "lolac.h"
  
  OSStatus AudioConverterNew(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, AudioConverterRef* outAudioConverter)
@@ -57,8 +75,12 @@ index 5672fcba1..b9c6faf6a 100644
 +	return AudioConverter::create(inSourceFormat, inDestinationFormat, (AudioConverter**)outAudioConverter);
  }
  
- OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, UInt32 inNumberClassDescriptions, const AudioClassDescription* nClassDescriptions, AudioConverterRef* outAudioConverter)
-@@ -59,13 +53,11 @@ OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFo
+-OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, UInt32 inNumberClassDescriptions, const AudioClassDescription* nClassDescriptions, AudioConverterRef* outAudioConverter)
++OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, UInt32 inNumberClassDescriptions, AudioClassDescription* nClassDescriptions, AudioConverterRef* outAudioConverter)
+ {
+ 	// FIXME
+ 	return AudioConverterNew(inSourceFormat, inDestinationFormat, outAudioConverter);
+@@ -59,42 +38,48 @@ OSStatus AudioConverterNewSpecific(const AudioStreamBasicDescription* inSourceFo
  
  OSStatus AudioConverterReset(AudioConverterRef inAudioConverter)
  {
@@ -76,10 +98,16 @@ index 5672fcba1..b9c6faf6a 100644
  }
  
  OSStatus AudioConverterDispose(AudioConverterRef inAudioConverter)
-@@ -79,22 +71,39 @@ OSStatus AudioConverterDispose(AudioConverterRef inAudioConverter)
-         if (!liveConverters.erase(inAudioConverter))
-             return paramErr;
-     }
+ {
+-    if (audioTrace())
+-        std::fprintf(stderr, "RIOT_AUDIO dispose converter=%p\n", inAudioConverter);
+-    if (!inAudioConverter)
+-        return paramErr;
+-    {
+-        std::lock_guard<std::mutex> lock(converterMutex);
+-        if (!liveConverters.erase(inAudioConverter))
+-            return paramErr;
+-    }
 +	LOL_AC("AudioConverterDispose conv=%p live=%d\n", inAudioConverter, (int) AudioConverter::isLive(inAudioConverter));
 +
 +	/* Disposing of something this framework never handed out, or handed out and
@@ -116,7 +144,7 @@ index 5672fcba1..b9c6faf6a 100644
  	return ((AudioConverter*)inAudioConverter)->setProperty(inPropertyID, inPropertyDataSize, inPropertyData);
  }
  
-@@ -103,6 +112,9 @@ OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32
+@@ -103,6 +88,9 @@ OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32
  	AudioBufferList in, out;
  	OSStatus stat;
  
@@ -126,7 +154,7 @@ index 5672fcba1..b9c6faf6a 100644
  	in.mNumberBuffers = out.mNumberBuffers = 1;
  
  	in.mBuffers[0].mNumberChannels = 2;
-@@ -122,6 +134,11 @@ OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32
+@@ -122,6 +110,11 @@ OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32
  
  OSStatus AudioConverterFillComplexBuffer(AudioConverterRef inAudioConverter, AudioConverterComplexInputDataProc inInputDataProc, void *inInputDataProcUserData, UInt32 *ioOutputDataPacketSize, AudioBufferList *outOutputData, AudioStreamPacketDescription* outPacketDescription)
  {
@@ -138,7 +166,7 @@ index 5672fcba1..b9c6faf6a 100644
  	return ((AudioConverter*)inAudioConverter)->fillComplex(inInputDataProc, inInputDataProcUserData, ioOutputDataPacketSize, outOutputData, outPacketDescription);
  }
  
-@@ -130,6 +147,10 @@ OSStatus AudioConverterConvertComplexBuffer(AudioConverterRef inAudioConverter,
+@@ -130,6 +123,10 @@ OSStatus AudioConverterConvertComplexBuffer(AudioConverterRef inAudioConverter,
  	OSStatus status;
  	UInt32 dataPacketSize;
  	int64_t totalOutBytes = 0;
@@ -150,7 +178,7 @@ index 5672fcba1..b9c6faf6a 100644
  	
  	CallbackBlock callbackBlock =
 diff --git a/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp b/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp
-index fc4016e60..0491c91e8 100644
+index fc4016e60..ac6d790d2 100644
 --- a/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp
 +++ b/src/CoreAudio/AudioToolbox/AudioConverterImpl.cpp
 @@ -28,25 +28,45 @@ along with Darling.  If not, see <http://www.gnu.org/licenses/>.
@@ -207,7 +235,7 @@ index fc4016e60..0491c91e8 100644
  }
  
  AudioConverter::AudioConverter(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat)
-@@ -59,11 +79,48 @@ AudioConverter::AudioConverter(const AudioStreamBasicDescription* inSourceFormat
+@@ -59,19 +79,51 @@ AudioConverter::AudioConverter(const AudioStreamBasicDescription* inSourceFormat
  void AudioConverter::flush()
  {
  	TRACE();
@@ -258,7 +286,15 @@ index fc4016e60..0491c91e8 100644
  OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceFormat, const AudioStreamBasicDescription* inDestinationFormat, AudioConverter** out)
  {
  	TRACE2(inSourceFormat, inDestinationFormat);
-@@ -99,7 +156,17 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+-    if (!out)
+-        return paramErr;
+-    *out = nullptr;
+-    if (!inSourceFormat || !inDestinationFormat)
+-        return paramErr;
+ 	
+ 	// TODO: non-interleaved audio
+ 
+@@ -99,7 +151,17 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
  		return paramErr;
  	}
  
@@ -276,10 +312,11 @@ index fc4016e60..0491c91e8 100644
  
  	(*out)->m_decoder = cIn = avcodec_alloc_context3(codecIn);
  	
-@@ -124,6 +191,11 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+@@ -123,7 +185,11 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+ 	if (avcodec_open2((*out)->m_decoder, codecIn, nullptr) < 0)
  	{
  		delete *out;
-         *out = nullptr;
+-        *out = nullptr;
 +
 +		/* The caller is being told this failed, so it has no business being
 +		   handed the converter that just went away with it. */
@@ -288,7 +325,7 @@ index fc4016e60..0491c91e8 100644
  		std::cerr << "AudioConverter::create(): avcodec_open() failed, format in = " << std::hex << inSourceFormat->mFormatID << ", out = " << inDestinationFormat->mFormatID << std::dec << std::endl;
  
  		return paramErr;
-@@ -137,19 +209,23 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
+@@ -137,19 +203,23 @@ OSStatus AudioConverter::create(const AudioStreamBasicDescription* inSourceForma
  	return noErr;
  }
  
@@ -316,7 +353,7 @@ index fc4016e60..0491c91e8 100644
  #else
  	m_encoder->channels = m_destinationFormat.mChannelsPerFrame;
  	m_encoder->channel_layout = CAChannelCountToLayout(m_destinationFormat.mChannelsPerFrame);
-@@ -166,13 +242,16 @@ void AudioConverter::initEncoder()
+@@ -166,13 +236,16 @@ void AudioConverter::initEncoder()
  	
  	err = avcodec_open2(m_encoder, m_codecOut, 0);
  	if (err < 0)
@@ -336,7 +373,7 @@ index fc4016e60..0491c91e8 100644
  {
  #ifdef HAVE_AV_FRAME_ALLOC
  	m_audioFrame = av_frame_alloc();
-@@ -185,8 +264,7 @@ void AudioConverter::allocateBuffers()
+@@ -185,8 +258,7 @@ void AudioConverter::allocateBuffers()
  
  #warning "TODO: Remove deprecated 'channels' once we no longer support older distros" 
  #if LIBAVCODEC_VERSION_MAJOR >= 61
@@ -346,7 +383,7 @@ index fc4016e60..0491c91e8 100644
  	int audioSampleBuffer_size = av_samples_get_buffer_size(nullptr, m_encoder->ch_layout.nb_channels, m_audioFrame->nb_samples, m_encoder->sample_fmt, 0);
  #else
  	m_audioFrame->channel_layout = m_encoder->channel_layout;
-@@ -195,10 +273,7 @@ void AudioConverter::allocateBuffers()
+@@ -195,10 +267,7 @@ void AudioConverter::allocateBuffers()
  	void* audioSampleBuffer = (uint8_t*) av_malloc(audioSampleBuffer_size);
  
  	if (!audioSampleBuffer)
@@ -358,7 +395,7 @@ index fc4016e60..0491c91e8 100644
  
  	// Setup the data pointers in the AVFrame
  #if LIBAVCODEC_VERSION_MAJOR >= 61
-@@ -209,14 +284,16 @@ void AudioConverter::allocateBuffers()
+@@ -209,14 +278,16 @@ void AudioConverter::allocateBuffers()
  		(const uint8_t*) audioSampleBuffer, audioSampleBuffer_size, 0 ); err < 0)
  #endif
  	{
@@ -377,7 +414,7 @@ index fc4016e60..0491c91e8 100644
  	if (m_decoder)
  		avcodec_free_context(&m_decoder);
  	if (m_encoder)
-@@ -332,20 +409,52 @@ OSStatus AudioConverter::feedInput(AudioConverterComplexInputDataProc dataProc,
+@@ -332,20 +403,52 @@ OSStatus AudioConverter::feedInput(AudioConverterComplexInputDataProc dataProc,
  	
  	m_avpkt.size = bufferList.mBuffers[0].mDataByteSize;
  	m_avpkt.data = (uint8_t*) bufferList.mBuffers[0].mData;
@@ -434,7 +471,7 @@ index fc4016e60..0491c91e8 100644
  	av_opt_set_int(m_resampler, "in_channel_layout", CAChannelCountToLayout(m_sourceFormat.mChannelsPerFrame), 0);
  	av_opt_set_int(m_resampler, "out_channel_layout", CAChannelCountToLayout(m_destinationFormat.mChannelsPerFrame), 0);
  	av_opt_set_int(m_resampler, "in_channels", m_sourceFormat.mChannelsPerFrame, 0);
-@@ -354,6 +463,7 @@ void AudioConverter::setupResampler(const AVFrame* frame)
+@@ -354,6 +457,7 @@ void AudioConverter::setupResampler(const AVFrame* frame)
  	av_opt_set_int(m_resampler, "out_sample_rate", m_destinationFormat.mSampleRate, 0);
  	av_opt_set_int(m_resampler, "in_sample_fmt", frame->format, 0);
  	av_opt_set_int(m_resampler, "out_sample_fmt", m_targetFormat, 0);
@@ -442,7 +479,7 @@ index fc4016e60..0491c91e8 100644
  
  #ifdef DEBUG_AUDIOCONVERTER
  	std::cout << "RESAMPLER:\n";
-@@ -369,7 +479,14 @@ void AudioConverter::setupResampler(const AVFrame* frame)
+@@ -369,7 +473,14 @@ void AudioConverter::setupResampler(const AVFrame* frame)
  	
  	err = swr_init(m_resampler);
  	if (err < 0)
@@ -458,7 +495,7 @@ index fc4016e60..0491c91e8 100644
  }
  
  OSStatus AudioConverter::fillComplex(AudioConverterComplexInputDataProc dataProc, void* opaque,
-@@ -377,6 +494,12 @@ OSStatus AudioConverter::fillComplex(AudioConverterComplexInputDataProc dataProc
+@@ -377,6 +488,12 @@ OSStatus AudioConverter::fillComplex(AudioConverterComplexInputDataProc dataProc
  {
  	AVFrame* srcaudio;
  
@@ -471,7 +508,7 @@ index fc4016e60..0491c91e8 100644
  #ifdef HAVE_AV_FRAME_ALLOC
  	srcaudio = av_frame_alloc();
  	av_frame_unref(srcaudio);
-@@ -480,7 +603,7 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+@@ -480,7 +597,7 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
  #if 0
  		err = avcodec_decode_audio4(m_decoder, srcaudio, &gotFrame, &m_avpkt);
  		if (err < 0)
@@ -480,7 +517,7 @@ index fc4016e60..0491c91e8 100644
  
  		m_avpkt.size -= err;
  		m_avpkt.data += err;
-@@ -494,7 +617,7 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+@@ -494,7 +611,7 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
  				err = 0;
  			}
  			if (err < 0) {
@@ -489,7 +526,7 @@ index fc4016e60..0491c91e8 100644
  			}
  		} else {
  			// on success, the data packet has been consumed entirely
-@@ -506,23 +629,27 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+@@ -506,23 +623,27 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
  
  		if (err < 0) {
  			gotFrame = false;
@@ -521,7 +558,7 @@ index fc4016e60..0491c91e8 100644
  
  #ifdef DEBUG_AUDIOCONVERTER
  			m_resamplerInput.write((char*) srcaudio->data, srcaudio->nb_samples * 2 * m_sourceFormat.mChannelsPerFrame);
-@@ -530,9 +657,11 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+@@ -530,9 +651,11 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
  #endif
  			
  			// Resample PCM
@@ -534,7 +571,7 @@ index fc4016e60..0491c91e8 100644
  		}
  	}
  	while (!gotFrame);
-@@ -542,109 +671,118 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
+@@ -542,109 +665,118 @@ bool AudioConverter::feedDecoder(AudioConverterComplexInputDataProc dataProc, vo
  
  bool AudioConverter::feedEncoder()
  {
@@ -945,11 +982,31 @@ index cbbd0a569..33db986ce 100644
 +}
  
  #endif // COREAUDIOHOSTTIME_H
+diff --git a/src/frameworks/AVFoundation/include/AVFoundation/AVCaptureDevice.h b/src/frameworks/AVFoundation/include/AVFoundation/AVCaptureDevice.h
+index b2c25fbd4..d9050f55c 100644
+--- a/src/frameworks/AVFoundation/include/AVFoundation/AVCaptureDevice.h
++++ b/src/frameworks/AVFoundation/include/AVFoundation/AVCaptureDevice.h
+@@ -35,5 +35,8 @@ typedef NS_ENUM(NSInteger, AVAuthorizationStatus) {
+ 
+ + (AVAuthorizationStatus)authorizationStatusForMediaType:(AVMediaType)mediaType;
+ + (void)requestAccessForMediaType:(AVMediaType)mediaType completionHandler:(void (^)(BOOL granted))handler;
+++ (AVAuthorizationStatus) authorizationStatusForMediaType: (AVMediaType) mediaType;
+++ (void) requestAccessForMediaType: (AVMediaType) mediaType
++                 completionHandler: (void (^)(BOOL granted)) handler;
+ 
+ @end
 diff --git a/src/frameworks/Carbon/HIToolbox/CMakeLists.txt b/src/frameworks/Carbon/HIToolbox/CMakeLists.txt
-index 7d310f61c..d3134ed59 100644
+index 7d310f61c..1938a131f 100644
 --- a/src/frameworks/Carbon/HIToolbox/CMakeLists.txt
 +++ b/src/frameworks/Carbon/HIToolbox/CMakeLists.txt
-@@ -26,6 +26,7 @@ add_framework(HIToolbox
+@@ -19,13 +19,13 @@ add_framework(HIToolbox
+ 
+ 	SOURCES
+ 		src/Keyboards.cpp
+-		src/SecureInput.c
+ 		src/Events.cpp
+ 		src/CarbonEventsCore.c
+ 		src/CarbonEvents.c
  		src/MacApplication.cpp
  		src/MacWindows.cpp
  		src/TextInputSources.mm
@@ -979,7 +1036,7 @@ index 039a6bb23..741757dc6 100644
  
  #ifdef __cplusplus
 diff --git a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h
-index 4b42c9af8..98077dd63 100644
+index 4b42c9af8..6bd32f009 100644
 --- a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h
 +++ b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextInputSources.h
 @@ -2,6 +2,8 @@
@@ -1000,20 +1057,20 @@ index 4b42c9af8..98077dd63 100644
  
  typedef struct __TISInputSource* TISInputSourceRef;
  
-@@ -28,6 +32,13 @@ extern void* TISGetInputSourceProperty(TISInputSourceRef inputSourceRef, CFStrin
- extern TISInputSourceRef TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void);
- extern CFArrayRef TISCreateASCIICapableInputSourceList(void);
+@@ -26,7 +30,13 @@ extern TISInputSourceRef TISCopyCurrentKeyboardInputSource(void);
+ extern void* TISGetInputSourceProperty(TISInputSourceRef inputSourceRef, CFStringRef key);
  
+ extern TISInputSourceRef TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void);
++
 +/* The installed input sources, as an array of TISInputSourceRef.  A program that
 +   wants to know which keyboards can type ASCII - Chromium asks as soon as a text
 +   field takes focus - gets the answer from here, and an absent one takes the
 +   whole process down at the first keystroke rather than returning an error. */
-+extern CFArrayRef TISCreateASCIICapableInputSourceList(void);
+ extern CFArrayRef TISCreateASCIICapableInputSourceList(void);
 +extern CFArrayRef TISCreateInputSourceList(CFDictionaryRef properties, Boolean includeAllInstalled);
-+
+ 
  #ifdef __cplusplus
  }
- #endif
 diff --git a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h b/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h
 index 598ecaf95..790610174 100644
 --- a/src/frameworks/Carbon/HIToolbox/include/HIToolbox/TextServices.h
@@ -1107,8 +1164,28 @@ index 98e29c97a..1a91e4c9c 100644
 -	return LMGetKbdType();
 +	return 2;
  }
+diff --git a/src/frameworks/Carbon/HIToolbox/src/SecureInput.c b/src/frameworks/Carbon/HIToolbox/src/SecureInput.c
+deleted file mode 100644
+index ce290be4b..000000000
+--- a/src/frameworks/Carbon/HIToolbox/src/SecureInput.c
++++ /dev/null
+@@ -1,14 +0,0 @@
+-/* X11 does not provide the macOS secure-event or TSM document facilities.
+- * Export the entry points and report unsupported instead of aborting in dyld.
+- * Do not claim that ordinary X11 keyboard input has become secure. */
+-int EnableSecureEventInput(void) { return -4; }
+-int DisableSecureEventInput(void) { return -4; }
+-int TSMSetDocumentProperty(void *document, unsigned tag, unsigned size,
+-                          void *data) {
+-    (void)document; (void)tag; (void)size; (void)data;
+-    return -4;
+-}
+-int TSMRemoveDocumentProperty(void *document, unsigned tag) {
+-    (void)document; (void)tag;
+-    return -4;
+-}
 diff --git a/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm b/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm
-index f73278a35..f772b24af 100644
+index f73278a35..c5f2b2d13 100644
 --- a/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm
 +++ b/src/frameworks/Carbon/HIToolbox/src/TextInputSources.mm
 @@ -1,6 +1,9 @@
@@ -1159,21 +1236,26 @@ index f73278a35..f772b24af 100644
  
  	CFRelease(data);
  
-@@ -79,11 +107,92 @@ void* TISGetInputSourceProperty(TISInputSourceRef inputSourceRef, CFStringRef ke
+@@ -79,16 +107,90 @@ void* TISGetInputSourceProperty(TISInputSourceRef inputSourceRef, CFStringRef ke
  
  TISInputSourceRef TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void)
  {
 -    if (verbose) {
 -        puts("STUB: TISCopyCurrentASCIICapableKeyboardLayoutInputSource");
 -    }
+-
+-    return NULL;
 +	/* There is one keyboard layout here and it is the one the X server reports.
 +	   Answering NULL said instead that the user has no way to type ASCII at all,
 +	   which is not true and which a caller is entitled to treat as fatal. */
 +	return TISCopyCurrentKeyboardLayoutInputSource();
-+}
-+
-+CFArrayRef TISCreateASCIICapableInputSourceList(void)
-+{
+ }
+ 
+ CFArrayRef TISCreateASCIICapableInputSourceList(void)
+ {
+-    /* Until ASCII-capable layouts can be enumerated, return an owned empty
+-     * list. A NULL list would crash callers that unconditionally CFRelease. */
+-    return CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
 +	TISInputSourceRef layout = TISCopyCurrentKeyboardLayoutInputSource();
 +	CFArrayRef list;
 +
@@ -1250,12 +1332,9 @@ index f73278a35..f772b24af 100644
 +
 +	list = CFArrayCreate(NULL, (const void**) &layout, 1, &kCFTypeArrayCallBacks);
 +	CFRelease(layout);
- 
--    return NULL;
++
 +	return list;
  }
- 
- CFArrayRef TISCreateASCIICapableInputSourceList(void)
 diff --git a/src/frameworks/Carbon/HIToolbox/src/TextServices.c b/src/frameworks/Carbon/HIToolbox/src/TextServices.c
 new file mode 100644
 index 000000000..cd91c8ec5
@@ -1412,19 +1491,13 @@ index 1ca6c0473..256832739 100644
  #import <CoreLocation/CLEmergencyEnablementAssertion.h>
  #import <CoreLocation/CLLocationManagerStateTracker.h>
 diff --git a/src/frameworks/CoreLocation/src/CoreLocation.m b/src/frameworks/CoreLocation/src/CoreLocation.m
-index 0d3e83f36..bd05aaa1b 100644
+index 0d3e83f36..d487ad181 100644
 --- a/src/frameworks/CoreLocation/src/CoreLocation.m
 +++ b/src/frameworks/CoreLocation/src/CoreLocation.m
-@@ -22,6 +22,13 @@
+@@ -22,6 +22,7 @@
  #include <stdlib.h>
  #include <stdio.h>
  
-+const CLLocationAccuracy kCLLocationAccuracyBestForNavigation = -2.0;
-+const CLLocationAccuracy kCLLocationAccuracyBest = -1.0;
-+const CLLocationAccuracy kCLLocationAccuracyNearestTenMeters = 10.0;
-+const CLLocationAccuracy kCLLocationAccuracyHundredMeters = 100.0;
-+const CLLocationAccuracy kCLLocationAccuracyKilometer = 1000.0;
-+const CLLocationAccuracy kCLLocationAccuracyThreeKilometers = 3000.0;
 +
  static int verbose = 0;
  
@@ -1457,10 +1530,10 @@ index 8ad9c4040..7fc3b1b88 100644
  void* AudioToolbox_AudioConverterDispose(void);
  void* AudioToolbox_AudioConverterGetProperty(void);
 diff --git a/src/frameworks/CoreMedia/src/CoreMedia.c b/src/frameworks/CoreMedia/src/CoreMedia.c
-index 4a975959c..34c2c74d5 100644
+index 4a975959c..e78a3b9de 100644
 --- a/src/frameworks/CoreMedia/src/CoreMedia.c
 +++ b/src/frameworks/CoreMedia/src/CoreMedia.c
-@@ -25,6 +25,26 @@
+@@ -25,33 +25,36 @@
  
  const CFStringRef kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms = CFSTR("SampleDescriptionExtensionAtoms");
  const CFStringRef kCMSampleAttachmentKey_NotSync = CFSTR("NotSync");
@@ -1475,20 +1548,46 @@ index 4a975959c..34c2c74d5 100644
 +const CFStringRef kCMFormatDescriptionColorPrimaries_ITU_R_2020 = CFSTR("ITU_R_2020");
 +const CFStringRef kCMFormatDescriptionColorPrimaries_P3_D65 = CFSTR("P3_D65");
 +const CFStringRef kCMFormatDescriptionColorPrimaries_DCI_P3 = CFSTR("DCI_P3");
-+
-+const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_2020 = CFSTR("ITU_R_2020");
-+const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG = CFSTR("ITU_R_2100_HLG");
+ 
+-const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_709_2 = CFSTR("ITU_R_709_2");
+-const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_240M_1995 = CFSTR("SMPTE_240M_1995");
+-const CFStringRef kCMFormatDescriptionTransferFunction_UseGamma = CFSTR("UseGamma");
+ const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_2020 = CFSTR("ITU_R_2020");
+ const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG = CFSTR("ITU_R_2100_HLG");
 +const CFStringRef kCMFormatDescriptionTransferFunction_Linear = CFSTR("Linear");
-+const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ = CFSTR("SMPTE_ST_2084_PQ");
-+const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1 = CFSTR("SMPTE_ST_428_1");
+ const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ = CFSTR("SMPTE_ST_2084_PQ");
+ const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1 = CFSTR("SMPTE_ST_428_1");
+-const CFStringRef kCMFormatDescriptionTransferFunction_Linear = CFSTR("Linear");
+-const CFStringRef kCMFormatDescriptionTransferFunction_sRGB = CFSTR("sRGB");
 +const CFStringRef kCMFormatDescriptionTransferFunction_sRGB = CFSTR("IEC_sRGB");
 +
 +const CFStringRef kCMFormatDescriptionYCbCrMatrix_ITU_R_2020 = CFSTR("ITU_R_2020");
++
++const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_709_2 = CFSTR("ITU_R_709_2");
++const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_240M_1995 = CFSTR("SMPTE_240M_1995");
++const CFStringRef kCMFormatDescriptionTransferFunction_UseGamma = CFSTR("UseGamma");
+ const CFStringRef kCMFormatDescriptionColorPrimaries_ITU_R_709_2 = CFSTR("ITU_R_709_2");
+ const CFStringRef kCMFormatDescriptionColorPrimaries_EBU_3213 = CFSTR("EBU_3213");
+ const CFStringRef kCMFormatDescriptionColorPrimaries_SMPTE_C = CFSTR("SMPTE_C");
+-const CFStringRef kCMFormatDescriptionColorPrimaries_ITU_R_2020 = CFSTR("ITU_R_2020");
+-const CFStringRef kCMFormatDescriptionColorPrimaries_P3_D65 = CFSTR("P3_D65");
+-const CFStringRef kCMFormatDescriptionColorPrimaries_DCI_P3 = CFSTR("DCI_P3");
+-const CFStringRef kCMFormatDescriptionExtension_ContentLightLevelInfo = CFSTR("ContentLightLevelInfo");
+-const CFStringRef kCMFormatDescriptionExtension_Depth = CFSTR("Depth");
+-const CFStringRef kCMFormatDescriptionExtension_FormatName = CFSTR("FormatName");
+-const CFStringRef kCMFormatDescriptionExtension_FullRangeVideo = CFSTR("FullRangeVideo");
+-const CFStringRef kCMFormatDescriptionExtension_MasteringDisplayColorVolume = CFSTR("MasteringDisplayColorVolume");
+-const CFStringRef kCMSampleAttachmentKey_IsDependedOnByOthers = CFSTR("IsDependedOnByOthers");
+ const CFStringRef kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 = CFSTR("ITU_R_709_2");
+ const CFStringRef kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4 = CFSTR("ITU_R_601_4");
+ const CFStringRef kCMFormatDescriptionYCbCrMatrix_SMPTE_240M_1995 = CFSTR("SMPTE_240M_1995");
+-const CFStringRef kCMFormatDescriptionYCbCrMatrix_ITU_R_2020 = CFSTR("ITU_R_2020");
+-
+ static int verbose = 0;
  
- const CFStringRef kCMFormatDescriptionTransferFunction_ITU_R_709_2 = CFSTR("ITU_R_709_2");
- const CFStringRef kCMFormatDescriptionTransferFunction_SMPTE_240M_1995 = CFSTR("SMPTE_240M_1995");
+ __attribute__((constructor))
 diff --git a/src/frameworks/CoreServices/CMakeLists.txt b/src/frameworks/CoreServices/CMakeLists.txt
-index aae2c7435..dcad8d976 100644
+index aae2c7435..1959fc165 100644
 --- a/src/frameworks/CoreServices/CMakeLists.txt
 +++ b/src/frameworks/CoreServices/CMakeLists.txt
 @@ -53,6 +53,11 @@ add_framework(CoreServices
@@ -1503,7 +1602,7 @@ index aae2c7435..dcad8d976 100644
  		${EXTRA_LIBS}
  
  	RESOURCES
-@@ -84,8 +89,21 @@ reexport(CoreServices SharedFileList ${SharedFileList_BUILD})
+@@ -84,8 +89,29 @@ reexport(CoreServices SharedFileList ${SharedFileList_BUILD})
  reexport(CoreServices OSServices ${OSServices_BUILD})
  reexport(CoreServices Foundation ${CMAKE_BINARY_DIR}/src/external/foundation/Foundation)
  
@@ -1515,24 +1614,32 @@ index aae2c7435..dcad8d976 100644
 +# differently by the two Objective-C ABIs, which means the re-export list has to be
 +# per-architecture.
 +file(READ ${CMAKE_CURRENT_SOURCE_DIR}/reexport.exp CoreServices_reexports)
-+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_64BIT}.exp
-+	"${CoreServices_reexports}_OBJC_CLASS_$_NSUserActivity\n_OBJC_METACLASS_$_NSUserActivity\n")
-+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_32BIT}.exp
-+	"${CoreServices_reexports}.objc_class_name_NSUserActivity\n")
++# reexport.exp has no trailing newline, so strip and re-add one: without it the
++# first symbol appended below is concatenated onto its last line.
++string(STRIP "${CoreServices_reexports}" CoreServices_reexports)
 +
-+set_property(TARGET CoreServices APPEND_STRING PROPERTY LINK_FLAGS
-+  " -Xarch_${APPLE_ARCH_64BIT} -Wl,-reexported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_64BIT}.exp")
-+set_property(TARGET CoreServices APPEND_STRING PROPERTY LINK_FLAGS
-+  " -Xarch_${APPLE_ARCH_32BIT} -Wl,-reexported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_32BIT}.exp")
++if (TARGET_x86_64)
++	file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_64BIT}.exp
++		"${CoreServices_reexports}\n_OBJC_CLASS_$_NSUserActivity\n_OBJC_METACLASS_$_NSUserActivity\n")
++	set_property(TARGET CoreServices APPEND_STRING PROPERTY LINK_FLAGS
++		" -Xarch_${APPLE_ARCH_64BIT} -Wl,-reexported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_64BIT}.exp")
++endif ()
++
++if (TARGET_i386)
++	file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_32BIT}.exp
++		"${CoreServices_reexports}\n.objc_class_name_NSUserActivity\n")
++	set_property(TARGET CoreServices APPEND_STRING PROPERTY LINK_FLAGS
++		" -Xarch_${APPLE_ARCH_32BIT} -Wl,-reexported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/reexport-${APPLE_ARCH_32BIT}.exp")
++endif ()
  
  install(FILES SystemVersion.plist DESTINATION "libexec/darling/System/Library/CoreServices")
  install(FILES SystemVersionCompat.plist DESTINATION "libexec/darling/System/Library/CoreServices")
 \ No newline at end of file
 diff --git a/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m b/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m
-index 29eef9956..c21d1bb5c 100644
+index 29eef9956..8401a2f0b 100644
 --- a/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m
 +++ b/src/frameworks/CoreServices/src/LaunchServices/LSInfo.m
-@@ -333,3 +333,21 @@ CFStringRef LSCopyDefaultHandlerForURLScheme(CFStringRef inURLScheme)
+@@ -333,3 +333,10 @@ CFStringRef LSCopyDefaultHandlerForURLScheme(CFStringRef inURLScheme)
  	puts("LSCopyDefaultHandlerForURLScheme STUB");
  	return NULL; // (could also return "" I guess)
  }
@@ -1543,31 +1650,16 @@ index 29eef9956..c21d1bb5c 100644
 +// kLSCannotSetInfoErr says exactly that, and callers already have to cope with
 +// it: on a real system these fail for any bundle the user cannot register.
 +
-+OSStatus LSSetDefaultHandlerForURLScheme(CFStringRef inURLScheme, CFStringRef inHandlerBundleID)
-+{
-+	puts("LSSetDefaultHandlerForURLScheme STUB");
-+	return kLSCannotSetInfoErr;
-+}
-+
-+OSStatus LSSetDefaultRoleHandlerForContentType(CFStringRef inContentType, LSRolesMask inRole, CFStringRef inHandlerBundleID)
-+{
-+	puts("LSSetDefaultRoleHandlerForContentType STUB");
-+	return kLSCannotSetInfoErr;
-+}
 diff --git a/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h b/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h
-index 45ab80e75..cf434856a 100644
+index 45ab80e75..49b85c833 100644
 --- a/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h
 +++ b/src/frameworks/CoreVideo/include/CoreVideo/CVImageBuffer.h
-@@ -46,5 +46,12 @@ extern CFStringRef const kCVImageBufferTransferFunction_SMPTE_240M_1995;
+@@ -46,5 +46,8 @@ extern CFStringRef const kCVImageBufferTransferFunction_SMPTE_240M_1995;
  extern CFStringRef const kCVImageBufferTransferFunction_UseGamma;
  extern const CFStringRef kCVImageBufferContentLightLevelInfoKey;
  extern const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey;
 +extern CFStringRef const kCVImageBufferTransferFunction_sRGB;
 +
-+// HDR metadata, attached to a buffer rather than passed in the creation
-+// attributes: the values are CFData holding the mastering display and content
-+// light level payloads defined by ISO/IEC 23008-2.
-+extern CFStringRef const kCVImageBufferMasteringDisplayColorVolumeKey;
 +extern CFStringRef const kCVImageBufferContentLightLevelInfoKey;
  
  #endif // _COREVIDEO_CVIMAGEBUFFER_H_
@@ -1587,503 +1679,6 @@ index bdff6028c..a0bffb1d8 100644
  __END_DECLS
  
  #endif
-diff --git a/src/frameworks/CoreVideo/src/CVDisplayLink.mm b/src/frameworks/CoreVideo/src/CVDisplayLink.mm
-index c4cf2b2cf..8d212e3b5 100644
---- a/src/frameworks/CoreVideo/src/CVDisplayLink.mm
-+++ b/src/frameworks/CoreVideo/src/CVDisplayLink.mm
-@@ -649,9 +649,12 @@ static const NSString* kDirectDisplayArray = @"CGDirectDisplay";
- #import <AppKit/NSApplication.h>
- #import <AppKit/NSWindow.h>
- #import <AppKit/NSScreen.h>
--#import <Foundation/NSDictionary.h>
-+#import <Foundation/NSArray.h>
-+#import <Foundation/NSObject.h>
- #include <CoreGraphics/CGWindow.h>
- #include <CoreGraphics/CGDirectDisplay.h>
-+#include <dispatch/dispatch.h>
-+#include <mach/mach_time.h>
- 
- 
- /* sturdy host-shared record, written fresh on every mutation. */
-@@ -886,9 +889,21 @@ CVReturn CVDisplayLinkCreateWithActiveCGDisplays(CVDisplayLinkRef* displayLinkOu
- 	return kCVReturnSuccess;
- }
- 
--CVReturn CVDisplayLinkStart(CVDisplayLinkRef displayLink)
-+CVReturn CVDisplayLinkCreateWithOpenGLDisplayMask(
-+    CGOpenGLDisplayMask mask,
-+    CV_RETURNS_RETAINED_PARAMETER CVDisplayLinkRef CV_NULLABLE * CV_NONNULL displayLinkOut )
- {
--	if (!displayLink)
-+	CGDirectDisplayID displayID = CGOpenGLDisplayMaskToDisplayID(mask);
-+
-+	if (displayID == kCGNullDirectDisplay)
-+		return CVDisplayLinkCreateWithActiveCGDisplays(displayLinkOut);
-+
-+	return CVDisplayLinkCreateWithCGDisplay(displayID, displayLinkOut);
-+}
-+
-+CVReturn CVDisplayLinkSetCurrentCGDisplay( CVDisplayLinkRef displayLink, CGDirectDisplayID displayID )
-+{
-+	if (!displayLink || displayID == kCGNullDirectDisplay)
- 		return kCVReturnInvalidArgument;
-     CVStateGuard guard;
- 
-@@ -1038,26 +1053,19 @@ CVReturn CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext(CVDisplayLinkRef disp
- 			return kCVReturnSuccess;
- 		}
- 	}
--	
-+
- 	return kCVReturnError;
- }
- 
- CGDirectDisplayID CVDisplayLinkGetCurrentCGDisplay( CVDisplayLinkRef CV_NONNULL displayLink )
- {
- 	if (!displayLink)
--		return kCVReturnInvalidArgument;
-+		return kCGNullDirectDisplay;
- 
--	NSMutableDictionary* self = (NSMutableDictionary*) displayLink;
--	NSArray* ids = self[kDirectDisplayArray];
--
--	if ([ids count] > 0)
--		return (CGDirectDisplayID) [[ids firstObject] intValue];
--	return kCGNullDirectDisplay;
-+	return impl(displayLink)->_displayID;
- }
- 
--CVReturn CVDisplayLinkCreateWithCGDisplay(
--    CGDirectDisplayID displayID,
--    CV_RETURNS_RETAINED_PARAMETER CVDisplayLinkRef CV_NULLABLE * CV_NONNULL displayLinkOut )
-+CVReturn CVDisplayLinkSetOutputCallback(CVDisplayLinkRef displayLink, CVDisplayLinkOutputCallback callback, void *userInfo)
- {
- 	/* darling-lol M57: Chromium's NativeWidgetMacNSWindowHost aborts (and then
- 	 * crashes on the null link) when this returns non-success; Darling's
-@@ -1087,25 +1095,132 @@ CVReturn CVDisplayLinkCreateWithCGDisplay(
- 	return kCVReturnSuccess;
- }
- 
-+CVReturn CVDisplayLinkSetOutputHandler( CVDisplayLinkRef CV_NONNULL displayLink, CVDisplayLinkOutputHandler CV_NONNULL handler )
-+{
-+	if (!displayLink)
-+		return kCVReturnInvalidArgument;
-+
-+	CVDisplayLinkImpl* link = impl(displayLink);
-+	CVDisplayLinkOutputHandler old = link->_handler;
-+
-+	link->_handler = handler ? [handler copy] : nil;
-+
-+	if (old)
-+		[old release];
-+
-+	return kCVReturnSuccess;
-+}
-+
-+CVReturn CVDisplayLinkStart(CVDisplayLinkRef displayLink)
-+{
-+	if (!displayLink)
-+		return kCVReturnInvalidArgument;
-+
-+	[impl(displayLink) start];
-+	return kCVReturnSuccess;
-+}
-+
-+CVReturn CVDisplayLinkStop(CVDisplayLinkRef displayLink)
-+{
-+	if (!displayLink)
-+		return kCVReturnInvalidArgument;
-+
-+	[impl(displayLink) stop];
-+	return kCVReturnSuccess;
-+}
-+
-+Boolean CVDisplayLinkIsRunning(CVDisplayLinkRef displayLink)
-+{
-+	if (!displayLink)
-+		return false;
-+
-+	return impl(displayLink)->_running;
-+}
-+
- CVTime CVDisplayLinkGetNominalOutputVideoRefreshPeriod( CVDisplayLinkRef CV_NONNULL displayLink )
- {
- 	CVTime time = { 0, 0, kCVTimeIsIndefinite };
--	CGDirectDisplayID displayId = CVDisplayLinkGetCurrentCGDisplay(displayLink);
--	if (displayId == kCGNullDirectDisplay)
--		return time;
- 
--	CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayId);
--	if (!mode)
-+	if (!displayLink)
- 		return time;
- 
--	double rate = CGDisplayModeGetRefreshRate(mode);
--	if (rate < 1.0)
--		rate = 60.0;
--
- 	time.flags = 0;
--	time.timeValue = 1.0;
--	time.timeScale = rate;
-+	time.timeValue = [impl(displayLink) videoRefreshPeriod];
-+	time.timeScale = kVideoTimeScale;
-+	return time;
-+}
- 
--	CGDisplayModeRelease(mode);
-+CVTime CVDisplayLinkGetOutputVideoLatency( CVDisplayLinkRef CV_NONNULL displayLink )
-+{
-+	// Frames are handed to the X server immediately; there is no pipeline in
-+	// front of the display whose depth we could report.
-+	CVTime time = { 0, kVideoTimeScale, 0 };
- 	return time;
- }
-+
-+double CVDisplayLinkGetActualOutputVideoRefreshPeriod( CVDisplayLinkRef CV_NONNULL displayLink )
-+{
-+	if (!displayLink || !impl(displayLink)->_running)
-+		return 0.0;
-+
-+	return 1.0 / refreshRateForDisplay(impl(displayLink)->_displayID);
-+}
-+
-+CVReturn CVDisplayLinkGetCurrentTime( CVDisplayLinkRef CV_NONNULL displayLink, CVTimeStamp * CV_NONNULL outTime )
-+{
-+	if (!displayLink || !outTime)
-+		return kCVReturnInvalidArgument;
-+
-+	[impl(displayLink) fillTimeStamp: outTime framesFromNow: 0];
-+	return kCVReturnSuccess;
-+}
-+
-+CVReturn CVDisplayLinkTranslateTime( CVDisplayLinkRef CV_NONNULL displayLink, const CVTimeStamp * CV_NONNULL inTime, CVTimeStamp * CV_NONNULL outTime )
-+{
-+	if (!displayLink || !inTime || !outTime)
-+		return kCVReturnInvalidArgument;
-+
-+	CVDisplayLinkImpl* link = impl(displayLink);
-+	int64_t period = [link videoRefreshPeriod];
-+
-+	CVTimeStamp reference;
-+	[link fillTimeStamp: &reference framesFromNow: 0];
-+
-+	// Only one direction is ever asked for in practice: fill in whichever of
-+	// the two clocks the caller left out, using "now" as the common point.
-+	*outTime = *inTime;
-+	outTime->videoTimeScale = kVideoTimeScale;
-+	outTime->videoRefreshPeriod = period;
-+	outTime->rateScalar = 1.0;
-+
-+	if ((inTime->flags & kCVTimeStampHostTimeValid) && !(inTime->flags & kCVTimeStampVideoTimeValid))
-+	{
-+		int64_t deltaNs = int64_t(hostTimeToNanoseconds(inTime->hostTime)) - int64_t(hostTimeToNanoseconds(reference.hostTime));
-+		outTime->videoTime = reference.videoTime + deltaNs / (1000000000ll / kVideoTimeScale);
-+	}
-+	else if ((inTime->flags & kCVTimeStampVideoTimeValid) && !(inTime->flags & kCVTimeStampHostTimeValid))
-+	{
-+		int64_t deltaNs = (inTime->videoTime - reference.videoTime) * (1000000000ll / kVideoTimeScale);
-+		outTime->hostTime = reference.hostTime + nanosecondsToHostTime(uint64_t(deltaNs));
-+	}
-+
-+	outTime->flags = kCVTimeStampVideoTimeValid | kCVTimeStampHostTimeValid
-+		| kCVTimeStampVideoRefreshPeriodValid | kCVTimeStampRateScalarValid;
-+	return kCVReturnSuccess;
-+}
-+
-+CVDisplayLinkRef CVDisplayLinkRetain( CVDisplayLinkRef CV_NULLABLE displayLink )
-+{
-+	if (!displayLink)
-+		return NULL;
-+
-+	return (CVDisplayLinkRef) [impl(displayLink) retain];
-+}
-+
-+void CVDisplayLinkRelease(CVDisplayLinkRef displayLink)
-+{
-+	if (!displayLink)
-+		return;
-+
-+	[impl(displayLink) release];
-+}
-diff --git a/src/frameworks/CoreVideo/src/constants.c b/src/frameworks/CoreVideo/src/constants.c
-index 5d4fd4b2d..afff54826 100644
---- a/src/frameworks/CoreVideo/src/constants.c
-+++ b/src/frameworks/CoreVideo/src/constants.c
-@@ -47,6 +47,10 @@ const CFStringRef kCVBufferPropagatedAttachmentsKey = CFSTR("CVBufferPropagatedA
- const CFStringRef kCVImageBufferContentLightLevelInfoKey = CFSTR("ContentLightLevelInfo");
- const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey = CFSTR("MasteringDisplayColorVolume");
- const CFStringRef kCVPixelBufferPoolAllocationThresholdKey = CFSTR("AllocationThreshold");
-+const CFStringRef kCVImageBufferTransferFunction_sRGB = CFSTR("IEC_sRGB");
-+
-+const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey = CFSTR("MasteringDisplayColorVolume");
-+const CFStringRef kCVImageBufferContentLightLevelInfoKey = CFSTR("ContentLightLevelInfo");
- 
- const CFStringRef kCVPixelBufferIOSurfacePropertiesKey = CFSTR("IOSurfaceProperties");
- const CFStringRef kCVPixelBufferOpenGLCompatibilityKey = CFSTR("OpenGLCompatibility");
-@@ -58,3 +62,4 @@ const CFStringRef kCVPixelBufferWidthKey = CFSTR("Width");
- const CFStringRef kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey = CFSTR("IOSurfaceOpenGLTextureCompatibility");
- const CFStringRef kCVPixelBufferPoolMaximumBufferAgeKey = CFSTR("MaximumBufferAge");
- const CFStringRef kCVPixelBufferPoolMinimumBufferCountKey = CFSTR("MinimumBufferCount");
-+const CFStringRef kCVPixelBufferPoolAllocationThresholdKey = CFSTR("AllocationThreshold");
-diff --git a/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h b/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h
-index cee46a8fc..7e3f0136d 100644
---- a/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h
-+++ b/src/frameworks/IOSurface/include/IOSurface/IOSurfaceObjC.h
-@@ -48,6 +48,7 @@ extern IOSurfacePropertyKey IOSurfacePropertyKeyPixelSizeCastingAllowed;
- - (kern_return_t)unlockWithOptions:(IOSurfaceLockOptions)options seed:(nullable uint32_t *)seed;
- 
- 
-+@property (readonly) IOSurfaceID surfaceID;
- @property (readonly) NSInteger allocationSize;
- 
- @property (readonly) NSInteger width;
-diff --git a/src/frameworks/IOSurface/src/IOSurfaceInternal.h b/src/frameworks/IOSurface/src/IOSurfaceInternal.h
-new file mode 100644
-index 000000000..75b0e8f97
---- /dev/null
-+++ b/src/frameworks/IOSurface/src/IOSurfaceInternal.h
-@@ -0,0 +1,36 @@
-+/*
-+ This file is part of Darling.
-+
-+ Copyright (C) 2020 Lubos Dolezel
-+
-+ Darling is free software: you can redistribute it and/or modify
-+ it under the terms of the GNU General Public License as published by
-+ the Free Software Foundation, either version 3 of the License, or
-+ (at your option) any later version.
-+
-+ Darling is distributed in the hope that it will be useful,
-+ but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-+ GNU General Public License for more details.
-+
-+ You should have received a copy of the GNU General Public License
-+ along with Darling.  If not, see <http://www.gnu.org/licenses/>.
-+*/
-+
-+// Shared between this framework's own .m files. It deliberately does not live
-+// next to IOSurfacePriv.h: that header is also read by iokitd, which has a C++
-+// class of its own called IOSurface and cannot see an Objective-C one.
-+
-+#ifndef IOSURFACE_INTERNAL_H
-+#define IOSURFACE_INTERNAL_H
-+#import <IOSurface/IOSurfaceObjC.h>
-+
-+@interface IOSurface (Darling)
-+
-+// The send right a surface is passed around by. See -[IOSurface createMachPort]
-+// for what is actually on the other end of it.
-+- (mach_port_t) createMachPort;
-+
-+@end
-+
-+#endif
-diff --git a/src/frameworks/IOSurface/src/IOSurfaceObjC.m b/src/frameworks/IOSurface/src/IOSurfaceObjC.m
-index 951810c92..7f4800ea1 100644
---- a/src/frameworks/IOSurface/src/IOSurfaceObjC.m
-+++ b/src/frameworks/IOSurface/src/IOSurfaceObjC.m
-@@ -22,6 +22,11 @@
- #import <IOSurface/IOSurfacePriv.h>
- #import <Foundation/Foundation.h>
- #import <IOKit/IOCFSerialize.h>
-+#import <IOKit/IOCFUnserialize.h>
-+#include <errno.h>
-+#include <fcntl.h>
-+#include <stdio.h>
-+#include <string.h>
- #include <stdatomic.h>
- #include <stdlib.h>
- 
-@@ -112,6 +117,12 @@ static IOSurfaceID allocateSurfaceID(void)
- 
- - (nullable instancetype)initWithResponse:(const void*)bytes length:(size_t)length
- {
-+	if (length < sizeof(struct _IOSurfaceObjectRetval))
-+	{
-+		[self release];
-+		return nil;
-+	}
-+
- 	ImplData* idata = (ImplData*) malloc(sizeof(ImplData));
- 	idata->surface = malloc(length);
- 	memcpy(idata->surface, bytes, length);
-@@ -123,6 +134,36 @@ static IOSurfaceID allocateSurfaceID(void)
- 	idata->attachments = [[NSMutableDictionary alloc] init];
- 	self->_impl = idata;
- 
-+	// iokitd owns the storage but cannot map it for us, so the address in the
-+	// response is ours to fill in.
-+	char path[PATH_MAX];
-+	_IOSurfaceBackingStorePath(idata->surface->surfaceID, path, sizeof(path));
-+
-+	int fd = open(path, O_RDWR);
-+
-+	if (fd < 0)
-+	{
-+		fprintf(stderr, "LOL_IOSURF open(%s) failed: %s\n", path, strerror(errno));
-+		[self release];
-+		return nil;
-+	}
-+
-+	void* mapping = mmap(NULL, idata->surface->allocSize, PROT_READ | PROT_WRITE,
-+			MAP_SHARED, fd, 0);
-+
-+	// The mapping keeps the storage alive on its own, and holding the
-+	// descriptor open past this point only costs the process a slot.
-+	close(fd);
-+
-+	if (mapping == MAP_FAILED)
-+	{
-+		fprintf(stderr, "LOL_IOSURF mmap(%llu) failed: %s\n", (unsigned long long) idata->surface->allocSize, strerror(errno));
-+		[self release];
-+		return nil;
-+	}
-+
-+	idata->surface->address = (uint64_t) (uintptr_t) mapping;
-+
- 	return self;
- }
- 
-@@ -142,6 +183,7 @@ static IOSurfaceID allocateSurfaceID(void)
- 	kern_return_t ret = IOConnectCallMethod(g_surfaceService, kIOSurfaceMethodCreate, NULL, 0, bytes, length, NULL, 0, responseBuffer, &responseLength);
- 	CFRelease(data);
- 
-+
- 	if (ret != kIOSurfaceSuccess)
- 	{
- 		/* darling-lol M57: Darling has no IOSurfaceRoot IOKit service, so the
-@@ -523,6 +565,16 @@ static IOSurfaceID allocateSurfaceID(void)
- 	return data->surface->planes[planeIndex].bytesPerElement;
- }
- 
-+- (IOSurfaceID) surfaceID
-+{
-+	return ((ImplData*) _impl)->surface->surfaceID;
-+}
-+
-+- (NSInteger) allocationSize
-+{
-+	return ((ImplData*) _impl)->surface->allocSize;
-+}
-+
- - (NSInteger)elementWidthOfPlaneAtIndex:(NSUInteger)planeIndex
- {
- 	return 1;
-@@ -825,6 +877,32 @@ IOSurfaceRef _IOSurfaceInitFromSharedMemfd(int fd)
- 	return IOConnectCallMethod(g_surfaceService, kIOSurfaceMethodUnlock, NULL, 0, &args, sizeof(args), NULL, 0, NULL, 0);
- }
- 
-+// Attachments live in iokitd with the rest of the surface - see
-+// IOSurfaceRoot::setSurfaceValues(). IOKit's struct input is one flat buffer,
-+// so the surface is named by a header and the values follow it serialized.
-+- (kern_return_t) _sendValues: (CFTypeRef) payload forMethod: (uint32_t) selector
-+{
-+	ImplData* data = (ImplData*) _impl;
-+	CFDataRef serialized = IOCFSerialize(payload, kIOCFSerializeToBinary);
-+
-+	if (!serialized)
-+		return kIOReturnUnsupported;
-+
-+	CFIndex length = CFDataGetLength(serialized);
-+	struct _IOSurfaceValueRequest* request = malloc(sizeof(*request) + length);
-+
-+	request->surfaceID = data->surface->surfaceID;
-+	request->reserved = 0;
-+	memcpy(request->payload, CFDataGetBytePtr(serialized), length);
-+	CFRelease(serialized);
-+
-+	kern_return_t ret = IOConnectCallMethod(g_surfaceService, selector, NULL, 0,
-+			request, sizeof(*request) + length, NULL, 0, NULL, 0);
-+
-+	free(request);
-+	return ret;
-+}
-+
- - (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector {
-     return [NSMethodSignature signatureWithObjCTypes: "v@:"];
- }
-diff --git a/src/frameworks/IOSurface/src/api.m b/src/frameworks/IOSurface/src/api.m
-index e873bcda5..3c3ad5ba3 100644
---- a/src/frameworks/IOSurface/src/api.m
-+++ b/src/frameworks/IOSurface/src/api.m
-@@ -180,6 +180,76 @@ IOSurfaceRef _Nullable IOSurfaceCreate(CFDictionaryRef properties)
- 	return (IOSurfaceRef) [[IOSurface alloc] initWithProperties: (NSDictionary*) properties];
- }
- 
-+IOSurfaceRef _Nullable IOSurfaceLookup(IOSurfaceID csid)
-+{
-+	return (IOSurfaceRef) [[IOSurface alloc] initWithSurfaceID: csid];
-+}
-+
-+IOSurfaceID IOSurfaceGetID(IOSurfaceRef buffer)
-+{
-+	return [(IOSurface*) buffer surfaceID];
-+}
-+
-+size_t IOSurfaceGetAllocSize(IOSurfaceRef buffer)
-+{
-+	return [(IOSurface*) buffer allocationSize];
-+}
-+
-+// What a surface's storage is rounded to. Callers size their own buffers with
-+// these before handing the numbers back in the creation properties, so the
-+// answers have to agree with what iokitd does when it lays a surface out.
-+size_t IOSurfaceGetPropertyAlignment(CFStringRef property)
-+{
-+	if (CFEqual(property, kIOSurfaceBytesPerRow) ||
-+		CFEqual(property, kIOSurfacePlaneBytesPerRow) ||
-+		CFEqual(property, kIOSurfaceOffset) ||
-+		CFEqual(property, kIOSurfacePlaneOffset) ||
-+		CFEqual(property, kIOSurfacePlaneBase))
-+	{
-+		return 16;
-+	}
-+
-+	if (CFEqual(property, kIOSurfaceAllocSize) ||
-+		CFEqual(property, kIOSurfacePlaneSize))
-+	{
-+		return 4096;
-+	}
-+
-+	return 1;
-+}
-+
-+size_t IOSurfaceAlignProperty(CFStringRef property, size_t value)
-+{
-+	size_t alignment = IOSurfaceGetPropertyAlignment(property);
-+
-+	return (value + alignment - 1) & ~(alignment - 1);
-+}
-+
-+size_t IOSurfaceGetPropertyMaximum(CFStringRef property)
-+{
-+	if (CFEqual(property, kIOSurfaceWidth) ||
-+		CFEqual(property, kIOSurfaceHeight) ||
-+		CFEqual(property, kIOSurfacePlaneWidth) ||
-+		CFEqual(property, kIOSurfacePlaneHeight))
-+	{
-+		return 32768;
-+	}
-+
-+	if (CFEqual(property, kIOSurfacePlaneInfo))
-+	{
-+		return 8;
-+	}
-+
-+	// Anything else is limited by what can actually be allocated rather than by
-+	// a rule of its own.
-+	return 0;
-+}
-+
-+mach_port_t IOSurfaceCreateMachPort(IOSurfaceRef buffer)
-+{
-+	return [(IOSurface*) buffer createMachPort];
-+}
-+
- IOSurfaceRef _Nullable IOSurfaceLookupFromMachPort(mach_port_t port)
- {
- 	if (port == MACH_PORT_NULL)
 diff --git a/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h b/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h
 index 9e9f35386..dcf000bc6 100644
 --- a/src/frameworks/ImageCaptureCore/include/ImageCaptureCore/ICCameraItem.h
@@ -2123,19 +1718,14 @@ index a3ef919c6..22a89fec8 100644
  
  @end
 diff --git a/src/frameworks/ImageCaptureCore/src/ICCameraItem.m b/src/frameworks/ImageCaptureCore/src/ICCameraItem.m
-index 0ca4ea610..88f0ff5bb 100644
+index 0ca4ea610..2eeb61361 100644
 --- a/src/frameworks/ImageCaptureCore/src/ICCameraItem.m
 +++ b/src/frameworks/ImageCaptureCore/src/ICCameraItem.m
-@@ -24,6 +24,12 @@ ICDownloadOption const ICOverwrite = @"ICOverwrite";
+@@ -23,7 +23,6 @@ ICDownloadOption const ICDownloadsDirectoryURL = @"ICDownloadsDirectoryURL";
+ ICDownloadOption const ICOverwrite = @"ICOverwrite";
  ICDownloadOption const ICSaveAsFilename = @"ICSaveAsFilename";
  ICDownloadOption const ICSavedFilename = @"ICSavedFilename";
- ICDownloadOption const ICTransportTypeMassStorage = @"MassStorage";
-+ICDownloadOption const ICSaveAsFilename = @"ICSaveAsFilename";
-+ICDownloadOption const ICSavedFilename = @"ICSavedFilename";
-+ICDownloadOption const ICSavedAncillaryFiles = @"ICSavedAncillaryFiles";
-+ICDownloadOption const ICOverwrite = @"ICOverwrite";
-+ICDownloadOption const ICDeleteAfterSuccessfulDownload = @"ICDeleteAfterSuccessfulDownload";
-+ICDownloadOption const ICDownloadSidecarFiles = @"ICDownloadSidecarFiles";
+-ICDownloadOption const ICTransportTypeMassStorage = @"MassStorage";
  
  @implementation ICCameraItem
  
@@ -2156,18 +1746,8 @@ index 0973658c4..d56a6f9c8 100644
  @implementation ICDevice
  
  - (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
-diff --git a/src/frameworks/MediaAccessibility/CMakeLists.txt b/src/frameworks/MediaAccessibility/CMakeLists.txt
-index 2edeaac81..c984a53a7 100644
---- a/src/frameworks/MediaAccessibility/CMakeLists.txt
-+++ b/src/frameworks/MediaAccessibility/CMakeLists.txt
-@@ -23,4 +23,5 @@ add_framework(MediaAccessibility
-     DEPENDENCIES
-         system
-         Foundation
-+        CoreFoundation
- )
 diff --git a/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h b/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h
-index 7916d13b1..aa9011b6a 100644
+index 7916d13b1..a9b6a2088 100644
 --- a/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h
 +++ b/src/frameworks/MediaAccessibility/include/MediaAccessibility/MediaAccessibility.h
 @@ -21,6 +21,14 @@
@@ -2185,161 +1765,30 @@ index 7916d13b1..aa9011b6a 100644
  void* MAAudibleMediaCopyPreferredCharacteristics(void);
  void* MAAudibleMediaPrefCopyPreferDescriptiveVideo(void);
  void* MAAudibleMediaPrefResetAll(void);
+@@ -268,6 +276,4 @@ void* MAXCaptionAppearanceSetPreferredLanguage(void);
+ 
+ void* MAXCaptionAppearanceShowCaptionsWhenAvailable(void);
+ 
+-extern const CFStringRef kMACaptionAppearanceSettingsChangedNotification;
+-
+ #endif
 diff --git a/src/frameworks/MediaAccessibility/src/MediaAccessibility.c b/src/frameworks/MediaAccessibility/src/MediaAccessibility.c
-index 62cc3c784..e0b0cf4b5 100644
+index 62cc3c784..ed3a7d2a9 100644
 --- a/src/frameworks/MediaAccessibility/src/MediaAccessibility.c
 +++ b/src/frameworks/MediaAccessibility/src/MediaAccessibility.c
-@@ -23,6 +23,8 @@
+@@ -23,10 +23,10 @@
  #include <stdlib.h>
  #include <stdio.h>
  
-+const CFStringRef kMACaptionAppearanceSettingsChangedNotification = CFSTR("kMACaptionAppearanceSettingsChangedNotification");
-+
- static int verbose = 0;
- 
+-static int verbose = 0;
+-
  const CFStringRef kMACaptionAppearanceSettingsChangedNotification = CFSTR("kMACaptionAppearanceSettingsChangedNotification");
-diff --git a/src/frameworks/OpenGL/CMakeLists.txt b/src/frameworks/OpenGL/CMakeLists.txt
-index d75d5e22d..ccb38125d 100644
---- a/src/frameworks/OpenGL/CMakeLists.txt
-+++ b/src/frameworks/OpenGL/CMakeLists.txt
-@@ -41,6 +41,11 @@ add_framework(OpenGL
-         IOSurface
- )
  
-+# Not linked (see the comment in OpenGL.c: linking them would publish the host's
-+# egl*/X* entry points to everything that links OpenGL.framework), but they have
-+# to exist before this framework is of any use.
-+add_dependencies(OpenGL EGL X11)
++static int verbose = 0;
 +
- set_property(TARGET OpenGL APPEND_STRING PROPERTY LINK_FLAGS
-     " -Wl,-reexport_library,${CMAKE_BINARY_DIR}/src/native/libGL.dylib \
-     -Wl,-reexport_library,${CMAKE_BINARY_DIR}/src/native/libGLU.dylib ")
-diff --git a/src/frameworks/OpenGL/OpenGL.c b/src/frameworks/OpenGL/OpenGL.c
-index a40a634d3..4874c9745 100644
---- a/src/frameworks/OpenGL/OpenGL.c
-+++ b/src/frameworks/OpenGL/OpenGL.c
-@@ -1,5 +1,7 @@
-+#include <stdbool.h>
- #include <stdlib.h>
- #include <stdio.h>  // for fprintf(stderr, "unimplemented")
-+#include <unistd.h>
- 
- #include <pthread.h>
- #include <time.h>
-@@ -14,6 +16,7 @@ extern long __lolsys_syscall(long,long,long,long,long,long,int);
- #include <OpenGL/OpenGL.h>
- #include <OpenGL/glext.h>
- #include <OpenGL/CGLInternal.h>
-+#include <IOSurface/IOSurface.h>
- #include <CoreFoundation/CFDictionary.h>
- #include <IOSurface/IOSurface.h>
- #include <pthread.h>
-@@ -107,6 +110,11 @@ static EGLint const attribute_list[] = {
-     EGL_RED_SIZE, 1,
-     EGL_GREEN_SIZE, 1,
-     EGL_BLUE_SIZE, 1,
-+    /* We eglBindAPI(EGL_OPENGL_API) below, but EGL_RENDERABLE_TYPE defaults to
-+       EGL_OPENGL_ES_BIT, so without this we would pick a config that cannot
-+       back a desktop GL context at all. */
-+    EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-+    EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-     EGL_NONE
- };
- 
-@@ -120,6 +128,9 @@ struct _CGLDisplay
- static CFMutableDictionaryRef g_displays;
- static pthread_mutex_t g_displaysMutex = PTHREAD_MUTEX_INITIALIZER;
- 
-+/* Defined further down, next to the rest of the IOSurface texture bookkeeping. */
-+static void forgetSurfaceTexturesForContext(CGLContextObj context);
-+
- struct _CGLContextObj {
-     GLuint retain_count;
-     pthread_mutex_t lock;
-@@ -188,6 +199,14 @@ static void _CGLInitialize(void)
-     g_displays = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
- }
- 
-+/* LOL_CGL: temporary instrumentation - remove before committing. */
-+static int lol_cgl(void) {
-+    static int on = -1;
-+    if (on < 0) on = getenv("LOL_CGL") != NULL;
-+    return on;
-+}
-+#define CGLLOG(...) do { if (lol_cgl()) { fprintf(stderr, "LOL_CGL[%d]: ", getpid()); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); fflush(stderr); } } while (0)
-+
- static int attributes_count(const CGLPixelFormatAttribute *attrs) {
-     int result;
-     for (result = 0; attrs[result] != 0; result++) {
-@@ -203,7 +222,7 @@ CGLError CGLRegisterNativeDisplay(void *native_display) {
-     ensure_native_egl();
-     display = x11EGLDisplay(native_display);
- 
--    if (display == EGL_NO_DISPLAY) {
-+    if (!loadNativeLibraries()) {
-         return kCGLBadConnection;
-     }
- 
-@@ -299,10 +318,25 @@ CGLError CGLSetSurface(CGLContextObj gl, CGSConnectionID cid, CGSWindowID wid, C
- 
- CGLWindowRef CGLGetWindow(void *native_window) {
- 
-+    ensureDisplay();
-+
-     EGLNativeWindowType window = (EGLNativeWindowType) native_window;
-     EGLSurface surface = p_eglCreateWindowSurface(display, config, window, NULL);
- 
-     if (surface == EGL_NO_SURFACE) {
-+        /* Silently returning NULL here is how a window ends up never being
-+           presented: the caller attaches a NULL surface and every
-+           eglSwapBuffers() is a no-op.  Say what went wrong. */
-+        EGLint err = eglGetError();
-+        EGLint visualID = 0;
-+
-+        eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &visualID);
-+
-+        fprintf(stderr, "CGLGetWindow: eglCreateWindowSurface failed (0x%x) for "
-+                        "native window %p - the window's visual most likely does "
-+                        "not match the EGLConfig (see CGLGetNativeVisualID); "
-+                        "display=%p config=%p n=%d configVisual=0x%x\n",
-+                err, native_window, display, config, num_config, visualID);
-         return NULL;
-     }
- 
-@@ -429,6 +463,14 @@ CGLError CGLChoosePixelFormat(
-     CGLPixelFormatObj format = malloc(sizeof(struct _CGLPixelFormatObj));
-     int count = attributes_count(attrs);
- 
-+    if (lol_cgl()) {
-+        char buf[512]; int o = 0;
-+        for (int i = 0; attrs[i] != 0 && o < 400; i++)
-+            o += snprintf(buf + o, sizeof(buf) - o, "%d ", (int) attrs[i]);
-+        buf[o] = 0;
-+        CGLLOG("CGLChoosePixelFormat attrs=[ %s]", buf);
-+    }
-+
-     format->retain_count = 1;
-     format->attributes = calloc(count + 1, sizeof(CGLPixelFormatAttribute));
-     for (int i = 0; i < count; i++) {
-@@ -520,6 +562,10 @@ static CGLError createContext(CGLPixelFormatObj pixelFormat, CGLContextObj share
-     if (!display || !config || !p_eglBindAPI || !p_eglBindAPI(EGL_OPENGL_API))
-         return kCGLBadConnection;
- 
-+    CGLLOG("CGLCreateContext(pf=%p share=%p) entering", pixelFormat, share);
-+    ensureDisplay();
-+    CGLLOG("CGLCreateContext: display=%p config=%p, calling eglCreateContext", display, config);
-+
-     EGLContext egl_share = EGL_NO_CONTEXT;
-     EGLDisplay contextDisplay = share ? share->egl_display : display;
-     EGLConfig contextConfig = share ? share->egl_config : windowConfig ? windowConfig : config;
-@@ -549,6 +595,7 @@ static CGLError createContext(CGLPixelFormatObj pixelFormat, CGLContextObj share
-             (void*) display, (void*) config, (void*) egl_share, (void*) p_eglCreateContext);
-         return kCGLBadContext;
-     }
-+    CGLLOG("CGLCreateContext -> %p", egl_context);
- 
-     {
-         static int m58dg_ok = 0;
+ __attribute__((constructor))
+ static void initme(void) {
+     verbose = getenv("STUB_VERBOSE") != NULL;
 diff --git a/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h b/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h
 index 5cdd9a89c..da0f70b6b 100644
 --- a/src/frameworks/OpenGL/include/OpenGL/CGLInternal.h
@@ -2413,51 +1862,3 @@ index 79e1197dd..871e578c9 100644
  	wrap_elf(xkbfile libxkbfile.so)
  	wrap_elf(cairo libcairo.so)
  	wrap_elf(dbus libdbus-1.so)
-diff --git a/src/sandbox/sandbox.c b/src/sandbox/sandbox.c
-index 9afa967db..33c0d8826 100644
---- a/src/sandbox/sandbox.c
-+++ b/src/sandbox/sandbox.c
-@@ -4,10 +4,23 @@
- #include <stdlib.h>
- #include <stdio.h>
- #include <sys/types.h>
-+#include <stdbool.h>
-+#include <unistd.h>
-+
-+// Whether this process has "entered" a sandbox, i.e. whether one of the
-+// sandbox_init*() calls below has been made. Nothing is actually enforced, but
-+// sandbox_check() has to agree with them - see the comment there.
-+static bool sandbox_applied = false;
- 
- // DUMMY implementation
- const enum sandbox_filter_type SANDBOX_CHECK_NO_REPORT = SANDBOX_FILTER_NONE;
- 
-+// Darling has no sandbox, so every profile "applies" trivially. Note that the
-+// contract for all three of these is that `*errorbuf' is only written on
-+// failure, and is set to NULL on success: callers (Chromium's
-+// SeatbeltExecServer::ApplySandboxProfile(), for one) test the error pointer
-+// rather than the return value, so handing them a message alongside a success
-+// return reads as a hard failure.
- int sandbox_init(const char *profile, uint64_t flags, char **errorbuf)
- {
- 	/* darling-lol: no seatbelt enforcement exists, so init trivially
-@@ -87,6 +100,19 @@ int sandbox_check(pid_t pid, const char *operation, enum sandbox_filter_type typ
- 		return 1;
- 	}
- 	(void)type;
-+	// A NULL operation asks "is this process sandboxed?" rather than "is this
-+	// particular operation allowed?", and the two answers are the opposite way
-+	// round: non-zero means sandboxed, but for a real operation non-zero means
-+	// denied.
-+	//
-+	// Darling enforces nothing, so no operation is ever denied. It does accept
-+	// sandbox_init*() though, and a caller that just applied a profile expects
-+	// to be told it is in a sandbox afterwards - Chromium's helper processes
-+	// CHECK() exactly that, and abort on startup if we say no. We have no way
-+	// to answer for another process, so report the truth only about ourselves.
-+	if (operation == NULL)
-+		return (pid == getpid() && sandbox_applied) ? 1 : 0;
-+
- 	return 0;
- }
- 

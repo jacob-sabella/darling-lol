@@ -32,20 +32,13 @@ index 69e8bc5af..cd6ef2743 100644
  - (void)getObjects:(ObjectType __unsafe_unretained [])objects andKeys:(KeyType __unsafe_unretained [])keys;
  - (ObjectType)objectForKeyedSubscript:(id)key;
 diff --git a/include/Foundation/NSProcessInfo.h b/include/Foundation/NSProcessInfo.h
-index f4d7b4d6d..32da9b11b 100644
+index f4d7b4d6d..79e555717 100644
 --- a/include/Foundation/NSProcessInfo.h
 +++ b/include/Foundation/NSProcessInfo.h
-@@ -60,6 +60,21 @@ typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
+@@ -60,6 +60,14 @@ typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
  
  @end
  
-+typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
-+    NSProcessInfoThermalStateNominal = 0,
-+    NSProcessInfoThermalStateFair = 1,
-+    NSProcessInfoThermalStateSerious = 2,
-+    NSProcessInfoThermalStateCritical = 3,
-+};
-+
 +// Posted when -thermalState changes. Nothing posts it here, which is consistent
 +// with -thermalState never changing.
 +FOUNDATION_EXPORT NSString *const NSProcessInfoThermalStateDidChangeNotification;
@@ -57,8 +50,13 @@ index f4d7b4d6d..32da9b11b 100644
  @interface NSProcessInfo (NSProcessInfoPlatform)
  -(BOOL)isMacCatalystApp;
  -(BOOL)isiOSAppOnMac;
+@@ -71,4 +79,3 @@ typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
+ FOUNDATION_EXPORT void __NSInitializeProcess(int argc,const char *argv[]);
+ #endif
+ 
+-FOUNDATION_EXPORT NSString *const NSProcessInfoThermalStateDidChangeNotification;
 diff --git a/src/NSProcessInfo.m b/src/NSProcessInfo.m
-index 420955aa9..5d0e704e8 100644
+index 420955aa9..731c5e00c 100644
 --- a/src/NSProcessInfo.m
 +++ b/src/NSProcessInfo.m
 @@ -370,6 +370,12 @@ SINGLETON_RR()
@@ -74,3 +72,8 @@ index 420955aa9..5d0e704e8 100644
  @implementation NSProcessInfo (NSProcessInfoPlatform)
  -(BOOL)isMacCatalystApp {
      return NO;
+@@ -413,4 +419,3 @@ void __NSInitializeProcess(int argc,const char *argv[]) {
+ }
+ #endif
+ 
+-NSString *const NSProcessInfoThermalStateDidChangeNotification = @"NSProcessInfoThermalStateDidChangeNotification";

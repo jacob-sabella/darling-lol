@@ -55,25 +55,62 @@ index b7b979a..e147dd1 100644
  
  		handle_send_result(message, sendResult, sendError, true);
 diff --git a/src/event.m b/src/event.m
-index e2d4bd6..5ffc254 100644
+index e2d4bd6..5cdb84c 100644
 --- a/src/event.m
 +++ b/src/event.m
-@@ -20,9 +20,35 @@
+@@ -20,88 +20,79 @@
  #import <xpc/xpc.h>
  #import <xpc/util.h>
  #import <xpc/launchd_defs.h>
 -#import <dispatch/dispatch.h>
 -#import <stdlib.h>
 -#import <Block.h>
-+
+ 
+-XPC_EXPORT const char* const _xpc_event_key_name = "XPCEventName";
+-XPC_EXPORT const char* const _xpc_event_key_stream_name = "XPCEventStreamName";
 +#include <dispatch/dispatch.h>
 +#include <Block.h>
 +#include <stdlib.h>
 +#include <string.h>
-+
+ 
+-//
+-// private C API
+-//
+-
+-/*
+- * darling-lol: minimal but FUNCTIONAL event publisher.
+- *
+- * xpc_event_publisher_* was entirely stubbed (create -> NULL, set_handler
+- * -> dropped, activate -> no-op). That silently broke any daemon that gates
+- * its real initialization on the publisher's INITIAL_BARRIER callback.
+- *
+- * notifyd is exactly such a daemon: it creates the publisher for
+- * "com.apple.notifyd.matching" and only calls dispatch_mach_connect() for
+- * its Mach channels from inside the handler when it sees
+- * XPC_EVENT_PUBLISHER_ACTION_INITIAL_BARRIER. Because activate() did
+- * nothing, the barrier never fired, the channels were never connected, and
+- * the `com.apple.system.notification_center` Mach service registered with
+- * launchd was left without a serving endpoint. Clients then either hung in
+- * bootstrap/check-in or failed outright -- e.g. Chromium's
+- * ThermalStateObserverMac logged "unable to register to power
+- * notifications. Result: 9" (NOTIFY_STATUS_SERVER_NOT_FOUND).
+- *
+- * We do not need a real launchd-backed event stream here; we only need the
+- * lifecycle the server expects:
+- *   - create() gives back a usable object,
+- *   - set_handler()/set_error_handler() remember the blocks,
+- *   - activate() delivers the INITIAL_BARRIER action once, synchronously
+- *     (Apple delivers it asynchronously on the publisher's queue; sync is
+- *     sufficient for notifyd, which only needs its connects to happen
+- *     before dispatch_main()).
+- * ADD/REMOVE actions are only ever produced by launchd from registered
+- * event streams, which Darling does not have; they are not needed to bring
+- * notifyd's channels up.
+- */
 +// actually, the event publisher is it's own class
 +typedef xpc_object_t xpc_event_publisher_t;
-+
+ 
+-typedef struct _xpc_event_publisher_s {
 +// An event publisher is the launchd side of the "launch events" machinery: a
 +// daemon creates one, launchd replays every subscription that is already on
 +// disk for it as a series of ADD actions and then fires a single INITIAL_BARRIER
@@ -88,16 +125,21 @@ index e2d4bd6..5ffc254 100644
 +// (CoreFoundation, IOKit's power-source notifications, ...) blocked forever in
 +// its first message to notifyd.
 +struct _xpc_event_publisher {
-+	const char* name;
-+	dispatch_queue_t queue;
+ 	const char* name;
+ 	dispatch_queue_t queue;
+-	void (^handler)(xpc_event_publisher_action_t action, uint64_t event_token, xpc_object_t descriptor);
 +	void (^handler)(xpc_event_publisher_action_t action, uint64_t token, xpc_object_t descriptor);
-+	void (^error_handler)(int error);
-+	bool activated;
+ 	void (^error_handler)(int error);
+ 	bool activated;
+-} *xpc_event_publisher_t;
 +};
- 
- XPC_EXPORT const char* const _xpc_event_key_name = "XPCEventName";
- XPC_EXPORT const char* const _xpc_event_key_stream_name = "XPCEventStreamName";
-@@ -72,36 +98,40 @@ typedef struct _xpc_event_publisher_s {
++
++XPC_EXPORT const char* const _xpc_event_key_name = "XPCEventName";
++XPC_EXPORT const char* const _xpc_event_key_stream_name = "XPCEventStreamName";
++
++//
++// private C API
++//
  
  XPC_EXPORT
  void xpc_event_publisher_activate(xpc_event_publisher_t xpub) {
@@ -159,7 +201,7 @@ index e2d4bd6..5ffc254 100644
  };
  
  XPC_EXPORT
-@@ -139,25 +169,32 @@ au_asid_t xpc_event_publisher_get_subscriber_asid(xpc_event_publisher_t xpub, ui
+@@ -139,25 +130,32 @@ au_asid_t xpc_event_publisher_get_subscriber_asid(xpc_event_publisher_t xpub, ui
  
  XPC_EXPORT
  void xpc_event_publisher_set_error_handler(xpc_event_publisher_t xpub, void (^handler)()) {

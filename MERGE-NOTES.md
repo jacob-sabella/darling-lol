@@ -121,3 +121,133 @@ upstream, re-merge the same way: clone each component at its pinned revision, ap
 re-emit each `patches-jsabella/<c>.patch`. Generate the diffs as **bytes** — capturing them
 as text applies universal-newline translation and silently strips the CRs out of any CRLF
 file's context lines, after which the patch no longer applies.
+
+## How the contested files were resolved
+
+117 files were contested. The policy changed twice, each time because a real build found
+something no textual merge or symbol audit could see, and the final shape is:
+
+**Implementations: whole file, from one side.** Per-*region* resolution was tried first and
+is wrong. Where both sides rewrote the body of one function while leaving its signature as
+context, git merges the two bodies as adjacent text with no conflict at all: `removexattr.c`
+came out calling `vchroot_expand` twice and issuing the removexattr syscall twice, mixing one
+side's error mapping with the other's. No symbol-level check can see that, because the symbol
+is defined exactly once. So a contested implementation file is taken entire from whichever
+side owns that subsystem: 67 files from darling-lol, 50 from this tree.
+
+**Headers: the union of both sides.** A header is a list of declarations, not logic, and both
+sides only ever appended to it. Picking a side there discards the other side's declarations
+while its implementation — which merged cleanly, as a union of both sides' code — still uses
+them, and the build fails with `use of undeclared identifier` a long way from the header. 14
+contested headers are therefore re-merged three-way with `git merge-file --union`, gated on
+*neither* side having deleted a line, so nothing can be lost that way. One (`NSSpeechSynthesizer.h`)
+produced a structurally invalid file — a second `@interface` with no matching `@end` — and is
+rejected by a scope/conditional balance check and falls back to a whole-file choice.
+
+**Features, not files, decide the unit.** Whole-file resolution picks each file alone, so it
+will take a header from one side and its implementation from the other. Where both sides
+built the *same* feature the halves then disagree about types, struct members, selectors, or
+— worst, because it survives compilation — about which functions exist at all. These groups
+are forced to one side as a unit:
+
+| group | side | why |
+|---|---|---|
+| all of `iokitd` (32 files) | darling-lol | Both sides implemented IOKit interest notifications independently — this tree as `IOInterestNotification.cpp`, theirs as `.mm`, each with its own header — and the merge kept both files *and* both CMake entries. Theirs is the complete one (286 lines against 41, with retry, port liveness and message flushing). Their `IOObject`/`IOService` changes subsume this tree's: their `~IOObject` cancels the dispatch source with a handler capturing only the port, and their `is_io_service_open_extended` deallocates the properties memory and task right that this tree's leaks. |
+| `src/frameworks/IOSurface` | darling-lol | Must match the iokitd server: the two sides' wire structs differ (theirs has no `allocSize`), and theirs is the API-faithful Mach-port path (`IOSurfaceCreateMachPort`, `IOSurfaceLookupFromMachPort`) that multi-process Chromium uses. This tree's file-backed route was unfinished. |
+| darlingserver `message.{hpp,cpp}`, `call.cpp`, `fileport.c`, `duct-tape.h` | darling-lol | `message.hpp` declares `initializeServerCredentials()` and `pushAndSend()`, which only their `message.cpp` defines and their `darlingserver.cpp`/`server.cpp` call — the server did not link otherwise. Their fileport scopes the port to the process's dtape task, which is what multi-process Chromium needs. |
+| cocotron `CGDirectDisplay.{h,m}` | darling-lol | Theirs rewrote the implementation (120+/38-); this tree's additions conflict with their prototypes for `CGDisplayIsBuiltin`/`CGDisplayUsesForceToGray`. |
+| cocotron `CoreText/*` (bar its `CMakeLists.txt`) | this tree | One tightly coupled subsystem — `CTFont`, `KTFont` and `CTFontDescriptor` share internal structs and private functions — that resolution had split, leaving this tree's `CTFontManager.m` calling a `CTFontDescriptorCreateWithNameAndSize` that only its own files declare and define. This tree is much the larger side (~1140 added lines against ~600). Their `CMakeLists.txt` stays: both sides made the same source-list change and theirs additionally links fontconfig. |
+| cocotron `Onyx2D/O2Font*`, `CoreGraphics/CGFont.*` | this tree | The font stack reaches past CoreText: `O2FontCopyFaceList`, the `O2FontFace*` keys and `CGFontCopyTableTags` exist only on this side, so CoreText linked against nothing. 342 lines against 51 in `O2Font_freetype.m`, 144 against 17 in `O2Font.m`. |
+| cocotron `NSResponder.{h,m}` | this tree | Both added touch-bar support with different types — typed `NSTouchBar *` plus `makeTouchBar` here, `id`-based there. A genuine conflict, so the header could not be unioned and fell back to theirs, leaving the merged `.m` calling `makeTouchBar` with `NSTouchBar` undeclared. Their three `otherMouse*` declarations are grafted back, since their `.m` defines them. |
+| cocotron `CATransactionGroup`, `CGContext`, `CTFontManager`, `NSScreen` (h+m) | this tree | In each the header is this tree's alone and declares what its implementation defines, but the `.m` had gone the other way. |
+| root `TextInputSources.{h,mm}`, `TextServices.{h,c}` | this tree | They never touched `TextServices.h`, so resolving it to "theirs" meant resolving it to the pinned revision and dropping this tree's TSM declarations while keeping its definitions of them. |
+
+## Grafts and hand-decisions
+
+Six edits that no rule produces, each recorded in the pipeline with its reason:
+
+- **`notifyCheckin`** takes a second argument here (the checking-in thread's nsid): every
+  thread checks in, and only the main thread's checkin means the process has arrived, so only
+  that one may wake a parent in `fork_wait_for_child`. `call.cpp` is darling-lol's, so the
+  extra argument is grafted onto their call site. Both sides independently fixed the same
+  null-semaphore crash in `notifyCheckin`; this tree's version also distinguishes the main
+  thread, so its `process.cpp` is kept.
+- **`sendMany`'s undeliverable-message test** was widened by both sides to different errnos —
+  `ECONNRESET`/`ENOTCONN` here (an addressless datagram on an unconnected socket, which used
+  to terminate the whole server and with it every process in the prefix), `ENOENT` there. The
+  union is correct; every one of them means the message can never be delivered.
+- **`CoreServices` re-export generation.** This tree appends the `NSUserActivity` class
+  symbols to the list it reads from `reexport.exp`, whose last line has no trailing newline —
+  so the first appended symbol was concatenated onto it and the link failed on
+  `_remquo$fenv_access_off_OBJC_CLASS_$_NSUserActivity`, a symbol that is really two. It also
+  wrote and passed the 32-bit list unconditionally, and darling-lol configures with
+  `TARGET_i386=OFF`, so ld was handed an export list for a slice this build does not produce.
+  Both fixed.
+- **`NSAccessibilityRemoteUIElement`** gets darling-lol's `-init` grafted in ahead of
+  `-initWithRemoteToken:`.
+- **duct-tape RPC duplicates.** Both trees appended `fileport_makeport`/`fileport_makefd` to
+  `generate-rpc-wrappers.py`, so the generated `rpc.h` declared each twice with two different
+  call numbers. Resolved in darling-lol's favour end to end.
+- **`vm_map.h`**: darling-lol's untyped `void *dtape_descriptor` is removed, because
+  `duct-tape/src/memory.c` here is this tree's and uses the typed one.
+
+## Duplicate definitions
+
+Textual merge cleanliness says nothing about symbol-level duplication: when both trees fill
+the same gap and the additions land at *different points* in a file, git merges them as text
+with no conflict and the result defines one thing twice. Three dedupers run, each scoped so a
+form that legitimately repeats on one side is left alone (the per-file ceiling is
+`max(count in darling-lol, count in this tree)`):
+
+- 17 duplicate Objective-C method definitions, scoped by `@implementation` *and* full
+  selector — `insertSublayer:atIndex:` must not be confused with `insertSublayer:below:`, and
+  `NSArray.m` legitimately defines `-count` in several `@implementation` blocks.
+- 21 duplicate C/Objective-C function definitions, keyed on the *fully qualified* name:
+  keying on the trailing identifier alone matched the 44 unrelated `processCall` handlers in
+  `call.cpp` and deleted two real ones.
+- 28 duplicate declaration blocks — enumerators, ivars, typedefs, constants and method
+  declarations — driven by **clang's own diagnostics** rather than by a pattern. A regex is
+  not reliable here: a trailing comment or a two-line signature defeats it, and a
+  half-deleted declaration is worse than the duplicate. Replaying a build log is guarded, so
+  a range is only deleted when it really does still contain the symbol clang named there.
+
+Duplicate symbols that only the *linker* can see — the same definition added by each side to
+a **different** file, so no textual conflict ever occurred — were resolved individually:
+this tree's real `TSM*`/`*SecureEventInput` implementations replace darling-lol's four stubs
+returning `-4` (and their now-redundant `SecureInput.c` leaves the build); their `noErr`
+`LSSetDefaultHandlerForURLScheme` stub is kept over this tree's `kLSCannotSetInfoErr`,
+because a client registering a URL scheme needs the call to succeed; the six
+`kCLLocationAccuracy*` constants were identical, so theirs are kept in their own file; and for
+`ICTransportTypeMassStorage` and `kCTFontCollectionRemoveDuplicatesOption`, where the two
+sides' *values* differ, this tree's are kept.
+
+## What is verified, and what is not
+
+**Verified.** The tree configures with darling-lol's own flags and **builds to completion** —
+`make` exits 0 with every target built, no compile errors, no duplicate symbols and no
+undefined references. All 14 patches apply to a freshly prepared tree and round-trip
+byte-for-byte. No file carries a conflict marker; no file's brace balance was changed by the
+merge; no definition is duplicated beyond what one side already had; and no declaration/
+implementation pair is split across sides except one benign case (darling-lol's
+`block_suspend_gate` field, unused by this tree's `thread.c`).
+
+**Not verified.** Nothing here has been *run*. The build was never installed: both documented
+install paths write to `/usr/local` as root, which would also replace the existing Darling
+installation on this machine. So there is no evidence about runtime behaviour, the client, or
+rendering — only that the merged source compiles and links.
+
+**Known losses.** Forcing a group to one side discards the other side's work in those files.
+The notable ones: darling-lol's `IOObject`/`IOService` PROCMAP_QUERY optimisation for
+`readMemory` and its `block_suspend_gate` suspension fix are not in this tree's
+`process.cpp`/`thread.c`; their ~600 lines of CoreText and ~70 of `O2Font*` give way to this
+tree's larger versions; this tree's iokitd IOSurface work and its unfinished file-backed
+surface route are dropped entirely in favour of their Mach-port path.
+
+## Regenerating
+
+`tools/merge-pipeline/` holds the scripts that produced `patches-jsabella/`, in the order
+`driver.sh` runs them. They clone each component from a Darling checkout, build
+`base`/`lolbase`/`mine` branches, merge, resolve, graft, dedupe, audit, and finally emit the
+patches. Every judgement call above is encoded there with its reason, so the layer can be
+rebuilt rather than hand-maintained. The paths at the top of each script point at the tree
+they were run against and need adjusting.

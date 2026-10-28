@@ -274,31 +274,6 @@ index b4c307a..ac36a9b 100644
 +long sys___mac_syscall(char* policy, int call, void* arg);
  
  #endif // LINUX_MAC_SYSCALL_H
-diff --git a/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c b/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c
-index 1a763fe..272f341 100644
---- a/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c
-+++ b/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c
-@@ -496,10 +496,19 @@ normal:
- 		}
- 		else
- 		{
-+			// Note: these have to be targeted at ourselves explicitly. kill(0, sig)
-+			// means "every process in my process group", so using it here would
-+			// broadcast the signal to every other process in the prefix that happens
-+			// to share our process group (i.e. all of them, for a typical app and its
-+			// helper processes). One process taking an unhandled SIGTRAP would then
-+			// take down its parent and all of its siblings with it.
-+			int linux_pid = LINUX_SYSCALL(__NR_getpid);
-+			int linux_tid = LINUX_SYSCALL(__NR_gettid);
-+
- 			if (bsd_signum == SIGTSTP || bsd_signum == SIGSTOP)
- 			{
- 				kern_printf("sigexc: emulating SIGTSTP/SIGSTOP\n");
--				LINUX_SYSCALL(__NR_kill, 0, LINUX_SIGSTOP);
-+				LINUX_SYSCALL(__NR_kill, linux_pid, LINUX_SIGSTOP);
- 			}
- 			else
- 			{
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c
 index 46debb8..920b197 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c
@@ -320,67 +295,6 @@ index 46debb8..920b197 100644
  	[466] = sys_faccessat,
  	[467] = sys_fchmodat,
  	[468] = sys_fchownat,
-diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c
-index 5c678ab..e581634 100644
---- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c
-+++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c
-@@ -12,6 +12,9 @@
- 
- #include <darlingserver/rpc.h>
- 
-+// much easier to include than libpthread's `internal.h`
-+#include <darling/mldr/elfcalls/dthreads.h>
-+
- int pthread_obj_size;
- bsdthread_entry_t pthread_entry_point;
- bsdwqthread_entry_t wqueue_entry_point;
-@@ -167,7 +170,19 @@ void wqueue_entry_point_wrapper(void* self, int thread_port, void* stackaddr,
- // source in `libpthread/src/pthread_asm.S`.
- void wqueue_entry_point_asm_jump(void* self, int thread_port, void* stackaddr,
- 		void* item, int reuse, int nevents) {
--	
-+
-+	// XNU enters `_start_wqthread` with the stack pointer at the top of the thread's
-+	// stack: a workqueue thread parks inside the kernel, so by the time it comes back
-+	// the frames of the work item it just finished are gone. Here the park is an
-+	// ordinary syscall that returns, so nothing has unwound and the stack has to be
-+	// rewound by hand. Without this, every reuse of a workqueue thread leaks the few
-+	// kilobytes the previous one was using, and a thread that is handed a few hundred
-+	// work items runs off the bottom of its stack.
-+	//
-+	// `_start_wqthread` is jumped to rather than called, so it has to see the stack
-+	// pointer 16-byte aligned, exactly as the kernel leaves it.
-+	void* stack_top = (void*) ((uintptr_t) ((dthread_t) self)->stackaddr & ~(uintptr_t) 15);
-+
- 	// No additional function calls should occur beyond this point. Otherwise, we will risk our
- 	// registers being call-clobbered. I recommend reading the following doc for more details:
- 	// https://gcc.gnu.org/onlinedocs/gcc/Local-Register-Variables.html
-@@ -201,18 +216,22 @@ void wqueue_entry_point_asm_jump(void* self, int thread_port, void* stackaddr,
- 		::
- 		// Arguments follow the usual x86_64 calling conventions.
- 		"r"(arg1),"r"(arg2),"r"(arg3),"r"(arg4),"r"(arg5),"r"(arg6),
--		[wqueue_entry_point] "r"(wqueue_entry_point)
-+		[wqueue_entry_point] "r"(wqueue_entry_point),
-+		[stack_top] "r"(stack_top)
- 	);
- #elif __i386__
- 	__asm__ __volatile__ (
--		// `_start_wqthread` does not expect the stack to be aligned.
-+		// Start the thread's stack over, then jump; see the x86_64 case above.
-+		"movl %[stack_top], %%esp\n"
- 		"jmpl *%[wqueue_entry_point]\n"
- 		::
- 		// `_start_wqthread` does not follow the i386 calling conventions
- 		// for arguments. Instead of storing the arguments into the stack, 
- 		// the arguments are stored in the registers.
-+		// i386 has no register left to spare here, hence the memory operands.
- 		"r"(arg1),"r"(arg2),"r"(arg3),"r"(arg4),"r"(arg5),"r"(arg6),
--		[wqueue_entry_point] "rmi"(wqueue_entry_point)
-+		[wqueue_entry_point] "rmi"(wqueue_entry_point),
-+		[stack_top] "rmi"(stack_top)
- 	);
- #else
- 	#error "Missing assembly for architecture"
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/guarded/change_fdguard_np.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/guarded/change_fdguard_np.c
 index 0bb5800..40f9c85 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/guarded/change_fdguard_np.c
@@ -470,10 +384,10 @@ index 5ae6ad0..e2304a3 100644
  	return sys_open(filename, flags, mode);
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c
-index d6896e6..e631b4c 100644
+index d6896e6..83fc290 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c
-@@ -2,15 +2,13 @@
+@@ -2,21 +2,16 @@
  
  #include <darling/emulation/common/base.h>
  #include <darling/emulation/conversion/errno.h>
@@ -486,11 +400,19 @@ index d6896e6..e631b4c 100644
  {
  	int fd = -1;
 -	int ret;
-+
-+	int ret = dserver_rpc_fileport_makefd(port, &fd);
  
- 	/* darling-lol M54: see fileport_makeport.c. */
- 	ret = dserver_rpc_fileport_makefd((unsigned int)port, &fd);
+-	/* darling-lol M54: see fileport_makeport.c. */
+-	ret = dserver_rpc_fileport_makefd((unsigned int)port, &fd);
+-	if (ret < 0) {
+-		return -ret;
+-	}
++	int ret = dserver_rpc_fileport_makefd(port, &fd);
++
++	if (ret < 0)
++		return errno_linux_to_bsd(ret);
+ 
+ 	return fd;
+ }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c
 index a25882e..4309819 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c
@@ -595,7 +517,7 @@ index 479294a..029679d 100644
 +	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c
-index af904ed..0ff8fe0 100644
+index af904ed..f3d6919 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c
 @@ -7,6 +7,9 @@
@@ -628,17 +550,49 @@ index af904ed..0ff8fe0 100644
  
  extern __SIZE_TYPE__ strlen(const char *s);
  extern void *memset(void *s, int c, __SIZE_TYPE__ n);
-@@ -115,6 +124,9 @@ long sys_proc_info(uint32_t callnum, int32_t pid, uint32_t flavor,
- 					flavor);
- 			return -ENOTSUP;
- 		}
+@@ -83,38 +92,9 @@ long sys_proc_info(uint32_t callnum, int32_t pid, uint32_t flavor,
+ 		case 2: // proc_pidinfo
+ 			return _proc_pidinfo(pid, flavor, arg, buffer, bufsize);
+ 		case 3: // proc_pidfdinfo
+-		{
+-			if (flavor == PROC_PIDFDVNODEPATHINFO)
+-			{
+-				struct vnode_fdinfowithpath* info = (struct vnode_fdinfowithpath*) buffer;
+-				struct vchroot_unexpand_args uargs;
+-				char procpath[64];
+-				long len;
+-
+-				if (!buffer)
+-					return -EFAULT;
+-				if (bufsize < (int32_t)sizeof(*info))
+-					return -ENOSPC;
+-
+-				memset(buffer, 0, bufsize);
+-
+-				/* Resolve /proc/<pid>/fd/<fd> to the emulated path. */
+-				__simple_sprintf(procpath, "/proc/%d/fd/%d", pid, (int)arg);
+-				len = sys_readlink(procpath, uargs.path, sizeof(uargs.path) - 1);
+-				if (len < 0)
+-					return errno_linux_to_bsd(len);
+-				uargs.path[len] = 0;
+-
+-				if (vchroot_unexpand(&uargs) != 0)
+-					return -EINVAL;
+-
+-				strncpy(info->pvip.vip_path, uargs.path, sizeof(info->pvip.vip_path) - 1);
+-				return sizeof(*info);
+-			}
+-			__simple_printf("sys_proc_info(): Unsupported pidfdinfo flavor: %d\n",
+-					flavor);
+-			return -ENOTSUP;
+-		}
 +			// the fd this call asks about is passed in `arg`; see
 +			// proc_info_internal() in bsd/kern/proc_info.c.
 +			return _proc_pidfdinfo(pid, (int32_t) arg, flavor, buffer, bufsize);
  		case 1: // proc_listpids
  		default:
  			__simple_printf("sys_proc_info(): Unsupported callnum: %d\n",
-@@ -859,3 +871,199 @@ bail:
+@@ -859,3 +839,199 @@ bail:
  	close_internal(fd);
  	return count * sizeof(uint64_t);
  }
@@ -1268,7 +1222,7 @@ index 4b53ad2..80654b8 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/listxattr.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/listxattr.c
-index bc88090..cbf4d26 100644
+index bc88090..ddc54c6 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/listxattr.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/listxattr.c
 @@ -1,5 +1,9 @@
@@ -1281,8 +1235,35 @@ index bc88090..cbf4d26 100644
  #include <darling/emulation/common/base.h>
  #include <darling/emulation/conversion/errno.h>
  #include <darling/emulation/conversion/xattr/name.h>
-@@ -36,12 +40,15 @@ static unsigned long xattr_strip_user_prefix(char* namebuf, unsigned long len)
+@@ -9,39 +13,17 @@
  
+ #define XATTR_NOFOLLOW	1
+ 
+-/* Strip the "user." prefix from each NUL-separated name in the buffer so
+- * Darwin callers see namespace-less names, and compact the buffer. */
+-static unsigned long xattr_strip_user_prefix(char* namebuf, unsigned long len)
+-{
+-	char* in = namebuf;
+-	char* out = namebuf;
+-	char* end = namebuf + len;
+-
+-	while (in < end) {
+-		unsigned long n = 0;
+-		const char* s = in;
+-		char* dst = out;
+-		if (__builtin_strncmp(s, "user.", 5) == 0)
+-			s += 5;
+-		while (s + n < end && s[n] != '\0') {
+-			dst[n] = s[n];
+-			n++;
+-		}
+-		dst[n] = '\0';
+-		out += n + 1;
+-		in += (s - in) + n + 1;
+-	}
+-	return (unsigned long)(out - namebuf);
+-}
+-
  long sys_listxattr(const char* path, char* namebuf, unsigned long size, int options)
  {
 -	int ret;
@@ -1299,7 +1280,7 @@ index bc88090..cbf4d26 100644
  	strcpy(vc.path, path);
  
  	ret = vchroot_expand(&vc);
-@@ -49,15 +56,12 @@ long sys_listxattr(const char* path, char* namebuf, unsigned long size, int opti
+@@ -49,15 +31,12 @@ long sys_listxattr(const char* path, char* namebuf, unsigned long size, int opti
  		return errno_linux_to_bsd(ret);
  
  	if (options & XATTR_NOFOLLOW)
@@ -1320,7 +1301,7 @@ index bc88090..cbf4d26 100644
 +	return xattr_list_copyout(linux_list, ret, namebuf, size);
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/removexattr.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/removexattr.c
-index 705b845..ff7ffcc 100644
+index 705b845..f82fa0e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/removexattr.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/removexattr.c
 @@ -1,5 +1,9 @@
@@ -1333,7 +1314,7 @@ index 705b845..ff7ffcc 100644
  #include <darling/emulation/common/base.h>
  #include <darling/emulation/conversion/errno.h>
  #include <darling/emulation/conversion/xattr/name.h>
-@@ -11,13 +15,20 @@
+@@ -11,8 +15,12 @@
  
  long sys_removexattr(const char* path, const char* name, int options)
  {
@@ -1348,33 +1329,34 @@ index 705b845..ff7ffcc 100644
  
  	struct vchroot_expand_args vc;
  	vc.flags = (options & XATTR_NOFOLLOW) ? 0 : VCHROOT_FOLLOW;
- 	vc.dfd = get_perthread_wd();
+@@ -20,18 +28,17 @@ long sys_removexattr(const char* path, const char* name, int options)
  
-+	strcpy(vc.path, path);
-+	ret = vchroot_expand(&vc);
-+
  	strcpy(vc.path, path);
  	ret = vchroot_expand(&vc);
++
  	if (ret < 0)
-@@ -32,6 +43,13 @@ long sys_removexattr(const char* path, const char* name, int options)
+ 		return errno_linux_to_bsd(ret);
+ 
+-	name = xattr_name_to_linux(name, linux_name, sizeof(linux_name));
+-
+ 	if (options & XATTR_NOFOLLOW)
+-		ret = LINUX_SYSCALL(__NR_lremovexattr, vc.path, name);
++		ret = LINUX_SYSCALL(__NR_lremovexattr, vc.path, linux_name);
+ 	else
+-		ret = LINUX_SYSCALL(__NR_removexattr, vc.path, name);
++		ret = LINUX_SYSCALL(__NR_removexattr, vc.path, linux_name);
  
  	if (ret < 0)
- 		return xattr_errno_to_bsd(ret);
-+	if (options & XATTR_NOFOLLOW)
-+		ret = LINUX_SYSCALL(__NR_lremovexattr, vc.path, linux_name);
-+	else
-+		ret = LINUX_SYSCALL(__NR_removexattr, vc.path, linux_name);
-+
-+	if (ret < 0)
+-		return xattr_errno_to_bsd(ret);
 +		return xattr_errno_linux_to_bsd(ret);
  
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/setxattr.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/setxattr.c
-index 4e19963..9e031bb 100644
+index 4e19963..519db29 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/setxattr.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/setxattr.c
-@@ -16,20 +16,23 @@ extern char* strcpy(char* dst, const char* src);
+@@ -16,40 +16,33 @@ extern char* strcpy(char* dst, const char* src);
  long sys_setxattr(const char* path, const char* name, const void* value,
  		unsigned long size, unsigned int pos, int options)
  {
@@ -1398,22 +1380,29 @@ index 4e19963..9e031bb 100644
  	vc.flags = (options & XATTR_NOFOLLOW) ? 0 : VCHROOT_FOLLOW;
  	vc.dfd = get_perthread_wd();
  
-+	strcpy(vc.path, path);
-+	ret = vchroot_expand(&vc);
-+
  	strcpy(vc.path, path);
  	ret = vchroot_expand(&vc);
++
  	if (ret < 0)
-@@ -50,6 +53,13 @@ long sys_setxattr(const char* path, const char* name, const void* value,
+ 		return errno_linux_to_bsd(ret);
+ 
+-	/* darling-lol: Darwin names are namespace-less; Linux needs a
+-	 * namespace prefix or returns ENOTSUP. */
+-	name = xattr_name_to_linux(name, linux_name, sizeof(linux_name));
+-
+ 	if (options & XATTR_NOFOLLOW)
+-	{
+-		ret = LINUX_SYSCALL(__NR_lsetxattr, vc.path, name, value, size);
+-	}
++		ret = LINUX_SYSCALL(__NR_lsetxattr, vc.path, linux_name, value, size);
+ 	else
+-	{
+-		ret = LINUX_SYSCALL(__NR_setxattr, vc.path, name, value, size);
+-	}
++		ret = LINUX_SYSCALL(__NR_setxattr, vc.path, linux_name, value, size);
  
  	if (ret < 0)
- 		return xattr_errno_to_bsd(ret);
-+	if (options & XATTR_NOFOLLOW)
-+		ret = LINUX_SYSCALL(__NR_lsetxattr, vc.path, linux_name, value, size);
-+	else
-+		ret = LINUX_SYSCALL(__NR_setxattr, vc.path, linux_name, value, size);
-+
-+	if (ret < 0)
+-		return xattr_errno_to_bsd(ret);
 +		return xattr_errno_linux_to_bsd(ret);
  
  	return ret;
