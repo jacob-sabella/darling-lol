@@ -231,10 +231,39 @@ merge; no definition is duplicated beyond what one side already had; and no decl
 implementation pair is split across sides except one benign case (darling-lol's
 `block_suspend_gate` field, unused by this tree's `thread.c`).
 
-**Not verified.** Nothing here has been *run*. The build was never installed: both documented
-install paths write to `/usr/local` as root, which would also replace the existing Darling
-installation on this machine. So there is no evidence about runtime behaviour, the client, or
-rendering — only that the merged source compiles and links.
+**Run.** The merged build boots and runs. It was installed to a prefix under `$HOME`
+(`-DCMAKE_INSTALL_PREFIX=$HOME/.local/darling-lol`) and run in a user namespace, so neither the
+existing `/usr/local` installation nor `~/.darling` was touched:
+
+```sh
+DPREFIX=$HOME/.darling-lol-merged DARLING_HOST_UID=$(id -u) \
+unshare --user --map-users=0:$(id -u):1 --map-users=1:100000:65536 \
+               --map-groups=0:$(id -g):1 --map-groups=1:100000:65536 \
+  $HOME/.local/darling-lol/bin/darling shell <command>
+```
+
+The real uid must map to namespace uid 0 — the launcher checks that it is *owned* by root in the
+namespace, so `--map-auto --map-current-user --setuid=0` is refused despite `id -u` reporting 0 —
+and the guest account needs the subordinate range mapped alongside it. Setup and every later
+command have to run in the *same* namespace, since `darling shell` joins the container by opening
+its mount namespace.
+
+In that container: the prefix initialises, `launchd` starts, XPC services activate
+(`opendirectoryd`, `trustd`), `uname -a` reports `Darwin 23.6.0 ... xnu-10063.141.2~1`, `sw_vers`
+reports macOS 11.7.4, `hostinfo` reads the Mach host interfaces (32 processors), `sysctl`
+answers `hw.ncpu`/`kern.ostype`/`kern.osrelease` through the duct-tape layer, guest `/bin/bash`
+and `defaults` run, and `darling shutdown` exits cleanly. So the merged syscall, Mach and
+Foundation plumbing works at runtime, not just at link time.
+
+**Still not verified.** Nothing graphical, and nothing about the client. No X11/AppKit window was
+opened, so the rendering and font work — the largest contested area, and the whole point of
+upstream's tree — is untested here beyond compiling and linking. The game is not installed.
+
+**A note on the rootless install path.** `scripts/nix-idle.py` is fail-closed and cannot succeed
+when run on the host: it raises on any process whose `/proc/<pid>/maps` it cannot read, and
+`yama/ptrace_scope=1` makes `systemd --user` permanently unreadable, while its uid_map skip only
+triggers from inside a Darling namespace. Treating `PermissionError` as unrelated fixes it. That
+file is upstream's and was left unchanged here.
 
 **Known losses.** Forcing a group to one side discards the other side's work in those files.
 The notable ones: darling-lol's `IOObject`/`IOService` PROCMAP_QUERY optimisation for
