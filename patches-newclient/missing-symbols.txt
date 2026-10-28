@@ -1,0 +1,143 @@
+AVFAudio: 5 missing
+    _AVSpeechUtteranceDefaultSpeechRate
+    _AVSpeechUtteranceMaximumSpeechRate
+    _OBJC_CLASS_$_AVSpeechSynthesisVoice
+    _OBJC_CLASS_$_AVSpeechSynthesizer
+    _OBJC_CLASS_$_AVSpeechUtterance
+AVFoundation: 6 missing
+    _AVCaptureDeviceTypeBuiltInWideAngleCamera
+    _AVCaptureDeviceTypeExternalUnknown
+    _AVVideoCodecTypeJPEG
+    _OBJC_CLASS_$_AVCaptureDeviceDiscoverySession
+    _OBJC_CLASS_$_AVCapturePhotoOutput
+    _OBJC_CLASS_$_AVCapturePhotoSettings
+AppKit: 4 missing
+    _NSAccessibilityActionDescription
+    _OBJC_CLASS_$_NSAccessibilityCustomAction
+    _OBJC_CLASS_$_NSColorSampler
+    _OBJC_CLASS_$_NSImageSymbolConfiguration
+AuthenticationServices: 5 missing
+    _ASAuthorizationErrorDomain
+    _ASAuthorizationPublicKeyCredentialAttestationKindNone
+    _ASAuthorizationPublicKeyCredentialUserVerificationPreferenceDiscouraged
+    _ASAuthorizationPublicKeyCredentialUserVerificationPreferencePreferred
+    _ASAuthorizationPublicKeyCredentialUserVerificationPreferenceRequired
+Carbon: 1 missing
+    _AEProcessEvent
+CoreAudio: 3 missing
+    _AudioObjectAddPropertyListenerBlock
+    _AudioObjectRemovePropertyListenerBlock
+    _OBJC_CLASS_$_CATapDescription
+CoreFoundation: 9 missing
+    _CFFileSecurityGetMode
+    _CFFileSecuritySetGroup
+    _CFFileSecuritySetMode
+    _CFFileSecuritySetOwner
+    _NSURLContentTypeKey
+    _OBJC_CLASS_$_NSConstantArray
+    _OBJC_CLASS_$_NSConstantDictionary
+    ___NSArray0__struct
+    ___NSDictionary0__struct
+CoreGraphics: 19 missing
+    _CGColorCreateCopyByMatchingToColorSpace
+    _CGColorGetTypeID
+    _CGColorSpaceCopyName
+    _CGColorSpaceCreateICCBased
+    _CGDirectDisplayCopyCurrentMetalDevice
+    _CGDisplayStreamCreate
+    _CGDisplayStreamGetRunLoopSource
+    _CGDisplayStreamStart
+    _CGDisplayStreamStop
+    _CGDisplayStreamUpdateGetRects
+    _CGPDFPageGetRotationAngle
+    _CGRegionCreateWithRect
+    _CGSSetWindowAlpha
+    _CGSSetWindowCaptureExcludeShape
+    _CGSSetWindowTransform
+    _CGSSetWindowWarp
+    _CGWindowListCreateDescriptionFromArray
+    _CGWindowListCreateImageFromArray
+    _kCGColorSpaceExtendedLinearITUR_2020
+CoreMedia: 1 missing
+    _kCMSampleBufferAttachmentKey_ResetDecoderBeforeDecoding
+CoreServices: 13 missing
+    _AECreateAppleEvent
+    _AEGetParamDesc
+    _AEPutParamDesc
+    _AERemoveEventHandler
+    _AESendMessage
+    _FSEventsGetCurrentEventId
+    _LSSharedFileListCopySnapshot
+    _LSSharedFileListCreate
+    _LSSharedFileListInsertItemURL
+    _LSSharedFileListItemCopyProperty
+    _LSSharedFileListItemCopyResolvedURL
+    _LSSharedFileListItemRemove
+    __CSCheckFixDisable
+CoreText: 2 missing
+    _CTFontCollectionCreateMatchingFontDescriptorsForFamily
+    _kCTFontVariationAxesAttribute
+CoreVideo: 19 missing
+    _CVBufferCopyAttachment
+    _CVBufferHasAttachment
+    _CVBufferSetAttachment
+    _CVDisplayLinkGetCurrentTime
+    _CVImageBufferGetCleanRect
+    _CVPixelBufferCreateWithIOSurface
+    _CVPixelBufferGetBytesPerRow
+    _CVPixelBufferGetDataSize
+    _CVPixelBufferGetHeightOfPlane
+    _CVPixelBufferGetPixelFormatType
+    _CVPixelBufferGetTypeID
+    _CVPixelBufferIsPlanar
+    _CVPixelBufferPoolCreate
+    _CVPixelBufferPoolCreatePixelBuffer
+    _CVPixelBufferPoolCreatePixelBufferWithAuxAttributes
+    _CVPixelBufferPoolFlush
+    _kCVImageBufferAmbientViewingEnvironmentKey
+    _kCVImageBufferColorPrimaries_DCI_P3
+    _kCVImageBufferColorPrimaries_P3_D65
+Foundation: 6 missing
+    _OBJC_CLASS_$_NSConstantDoubleNumber
+    _OBJC_CLASS_$_NSConstantIntegerNumber
+    _OBJC_CLASS_$_NSHTTPURLResponse
+    _OBJC_CLASS_$_NSMutableURLRequest
+    _OBJC_CLASS_$_NSURLConnection
+    _OBJC_CLASS_$_NSURLRequest
+GameController: 11 missing
+    _GCControllerDidConnectNotification
+    _GCControllerDidDisconnectNotification
+    _GCHapticDurationInfinite
+    _GCHapticsLocalityDefault
+    _GCHapticsLocalityLeftHandle
+    _GCHapticsLocalityLeftTrigger
+    _GCHapticsLocalityRightHandle
+    _GCHapticsLocalityRightTrigger
+    _OBJC_CLASS_$_GCDualSenseGamepad
+    _OBJC_CLASS_$_GCDualShockGamepad
+    _OBJC_CLASS_$_GCXboxGamepad
+IOKit: 1 missing
+    _kIOMainPortDefault
+Metal: 8 missing
+    _MTLCommonCounterSetTimestamp
+    _MTLCommonCounterTimestamp
+    _OBJC_CLASS_$_MTLArgumentDescriptor
+    _OBJC_CLASS_$_MTLBlitPassDescriptor
+    _OBJC_CLASS_$_MTLCaptureDescriptor
+    _OBJC_CLASS_$_MTLCounterSampleBufferDescriptor
+    _OBJC_CLASS_$_MTLFunctionConstantValues
+    _OBJC_CLASS_$_MTLIndirectCommandBufferDescriptor
+QuartzCore: 2 missing
+    _CATransform3DMakeTranslation
+    _OBJC_CLASS_$_CAEDRMetadata
+Security: 1 missing
+    _SecTrustCopyCertificateChain
+UserNotifications: 1 missing
+    _UNNotificationAttachmentOptionsTypeHintKey
+VideoToolbox: 4 missing
+    _VTRegisterSupplementalVideoDecoderIfAvailable
+    _kVTCompressionPropertyKey_EncoderID
+    _kVTEncodeFrameOptionKey_BaseFrameQP
+    _kVTProfileLevel_HEVC_Main_AutoLevel
+
+libraries not installed (checked separately): Mantle, ReactiveObjC, RiotGamesApi, Squirrel, libSystem, libbsm, libc++, libcups, libffmpeg, libobjc, libresolv, libsandbox

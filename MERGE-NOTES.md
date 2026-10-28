@@ -290,10 +290,44 @@ One other observation: after a probe exits, `darling shutdown` sometimes logs
 -111` and a `LOLSIGFAIL` backtrace. The container still shuts down and the session exits 0, but
 the teardown path is not clean.
 
-**Still not verified.** Nothing about the client itself, and no pixels were compared: the probes
-exercise AppKit geometry, event delivery and window style, not rendered output. The game is not
-installed, so the IOSurface/Chromium compositing path that the whole project turns on is still
-untested.
+**The Riot client itself.** The client was then run on this build, in the same rootless
+container, against a reflink copy of the installed client from `~/.darling` (copy-on-write, so
+the original prefix is untouched and still carries its 2026-10-01 files). It got a long way:
+
+- the launcher started, read its patch database, and **self-updated over the network** — 435
+  files verified, a new release written and checked in 3.0 s, so TLS, trust evaluation (`trustd`
+  answered in 0.17 s), HTTP and file I/O all work;
+- it relaunched itself, validated the new install, and opened its native **392x488 splash
+  window** on the host X server, centred on the monitor, visible to `xdotool` as `Riot Client`;
+- it created a CGL context and handed off to `libRiotClientFoundation.dylib`.
+
+It then **aborted in dyld**, and the reason is not this merge: the release the client updated
+*itself* to (`142.0.1.5150`) is built against a newer macOS SDK than the one this project has
+been developed against. It hard-links five frameworks Darling does not have anywhere — not in
+its source tree, not in any install — starting with `QuickLookUI`. Stub frameworks for all five
+are in [`patches-newclient/`](patches-newclient/), and with them in place the client reaches the
+Electron stage and stops on `_OBJC_CLASS_$_NSConstantIntegerNumber`: the compiler that built
+this release emits constant literal objects as static instances, so Foundation and
+CoreFoundation have to provide those classes with Apple's instance layout. That is real work,
+not a stub. `patches-newclient/README.md` has the full account and
+`patches-newclient/missing-symbols.txt` the 121 symbols the whole bundle wants.
+
+The older client in `~/.darling` needs none of this — it asks for `QLPreviewPanel` from `Quartz`,
+which Darling has. The update is Riot's and happens on launch, so **an existing working prefix
+will hit the same wall the next time the client is started.**
+
+**Still not verified.** No pixels were compared, and the Electron UI never drew: the probes
+exercise AppKit geometry, event delivery and window style, not rendered output. League itself is
+not installed, so the IOSurface/Chromium compositing path that the whole project turns on is
+still untested.
+
+**Two things the launch needed that are worth knowing.** `scripts/run.sh` prepends
+`$repo/usr-local/bin:/usr/local/bin` to `PATH`, so a system-wide Darling install wins over one
+built elsewhere; point `DARLING_RUNNER_DIR` at the loader you mean to run. Mixing them is not
+subtle — an older `darlingserver` against a newer `libsystem_kernel` kills the server at boot
+with `Message buffer was too small for dserver_call_mach_msg_overwrite_t`. The guest also runs
+as root in this rootless setup (the host uid maps to 0), so the client's files land in
+`/var/root` and `/Users/root` rather than the configured guest home.
 
 **A note on the rootless install path.** `scripts/nix-idle.py` is fail-closed and cannot succeed
 when run on the host: it raises on any process whose `/proc/<pid>/maps` it cannot read, and
